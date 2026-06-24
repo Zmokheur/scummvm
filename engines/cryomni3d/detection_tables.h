@@ -22,6 +22,7 @@
 namespace CryOmni3D {
 
 #define GUI_OPTIONS_VERSAILLES                   GUIO3(GUIO_NOMIDI, GUIO_NOSFX, GUIO_NOASPECT)
+#define GUI_OPTIONS_EGYPT                        GUIO3(GUIO_NOMIDI, GUIO_NOSFX, GUIO_NOASPECT)
 #define GUI_OPTIONS_HNM_PLAYER                   GUIO4(GUIO_NOMIDI, GUIO_NOSFX, GUIO_NOSPEECH, GUIO_NOASPECT)
 
 // To correctly detect root we need files from various places: CD1, CD2, HDD, on-CD install files
@@ -35,6 +36,15 @@ namespace CryOmni3D {
 	AD_LISTEND}
 
 #define VERSAILLES_ENTRY_DEF(f, x, s) VERSAILLES_ENTRY(f, x, s, "txt")
+
+// Egypt 1156 B.C. shares the same broad CryOmni3D data layout, but uses
+// different root directories and filenames.
+#define EGYPT_ENTRY(f, x, s) { \
+	{ "EGYPTE.DEF", 0, nullptr, AD_NO_SIZE}, \
+	{ "LEVEL.TXT", 0, nullptr, AD_NO_SIZE}, \
+	{ "S01_24.HNM", 0, nullptr, AD_NO_SIZE}, \
+	{ f, 0, x, s}, \
+	AD_LISTEND}
 
 
 // To add new entries, you should check which fonts are loaded by the binary by looking at strings in it
@@ -618,6 +628,23 @@ static const CryOmni3DGameDescription gameDescriptions[] = {
 		0,
 	},
 
+	
+	// Egypt 1156 B.C.: Tomb of the Pharaoh
+	// French Windows 95 CD-ROM
+	{
+		{
+			"egypt",
+			"",
+			EGYPT_ENTRY("EGYPTE.EXE", "cce60d7469fbf587f652d756957457d6", 375808),
+			Common::FR_FRA,
+			Common::kPlatformWindows,
+			ADGF_UNSTABLE,
+			GUI_OPTIONS_EGYPT
+		},
+		GType_EGYPT,
+		0,
+	},
+
 	{ AD_TABLE_END_MARKER, 0, 0 }
 };
 
@@ -650,6 +677,16 @@ static const char *const directoryGlobs[] = {
 	/* lien_doc.* */
 	"TEXTES",
 
+	/** Egypt 1156 B.C. **/
+	"EGYPTE",
+	"REF",
+	"FR",
+	"SPRITE",
+	"WARP",
+	"SOUND",
+	"MUSIC",
+	"SYC",
+
 	/** End of list **/
 	nullptr
 };
@@ -672,6 +709,19 @@ static const CryOmni3DGameDescription fallbackDescs[] = {
 		0,
 		0,
 	},
+	{
+		{
+			"egypt",
+			"",
+			AD_ENTRY1(0, 0),
+			Common::UNK_LANG,
+			Common::kPlatformWindows,
+			ADGF_UNSTABLE,
+			GUIO0()
+		},
+		GType_EGYPT,
+		0,
+	},
 };
 
 static const ADFileBasedFallback fileBased[] = {
@@ -679,6 +729,8 @@ static const ADFileBasedFallback fileBased[] = {
 	{ &fallbackDescs[0].desc,  { "11D_LEB1.HNM", "COFBOUM.HNM", "PROGRAM.Z", 0 } },
 	{ &fallbackDescs[0].desc,  { "11D_LEB1.HNM", "COFBOUM.HNM", "VERSAILL.EXE", 0 } },
 	{ &fallbackDescs[0].desc,  { "11D_LEB1.HNM", "COFBOUM.HNM", "Versailles", 0 } },
+	{ &fallbackDescs[1].desc,  { "EGYPTE.DEF", "LEVEL.TXT", "S01_24.HNM", "EGYPTE.EXE", 0 } },
+	{ &fallbackDescs[1].desc,  { "EGYPTE.DEF", "LEVEL.TXT", "S01_24.HNM", 0 } },
 	{ 0, { 0 } }
 };
 

@@ -33,6 +33,7 @@ namespace CryOmni3D {
 
 static const PlainGameDescriptor cryomni3DGames[] = {
 	{"atlantis", "Atlantis: The Lost Tales"},
+	{"egypt", "Egypt 1156 B.C.: Tomb of the Pharaoh"},
 	{"versailles", "Versailles 1685"},
 	{nullptr, nullptr}
 };

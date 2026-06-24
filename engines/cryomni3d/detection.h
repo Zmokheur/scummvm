@@ -28,6 +28,7 @@ namespace CryOmni3D {
 
 enum CryOmni3DGameType {
 	GType_VERSAILLES,
+	GType_EGYPT,
 	GType_HNM_PLAYER
 };
 
