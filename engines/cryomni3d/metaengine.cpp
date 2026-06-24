@@ -34,6 +34,9 @@
 #ifdef ENABLE_VERSAILLES
 #include "cryomni3d/versailles/engine.h"
 #endif
+#ifdef ENABLE_EGYPT
+#include "cryomni3d/egypt/engine.h"
+#endif
 
 #include "cryomni3d/detection.h"
 
@@ -143,7 +146,12 @@ Common::Error CryOmni3DMetaEngine::createInstance(OSystem *syst, Engine **engine
 		return Common::Error(Common::kUnsupportedGameidError, _s("Versailles 1685 support is not compiled in"));
 #endif
 	case GType_EGYPT:
-		return Common::Error(Common::kUnsupportedGameidError, _s("Egypt support is not implemented yet"));
+#ifdef ENABLE_EGYPT
+		*engine = new Egypt::CryOmni3DEngine_Egypt(syst, gd);
+		return Common::kNoError;
+#else
+		return Common::Error(Common::kUnsupportedGameidError, _s("Egypt support is not compiled in"));
+#endif
 	case GType_HNM_PLAYER:
 		*engine = new CryOmni3DEngine_HNMPlayer(syst, gd);
 		return Common::kNoError;

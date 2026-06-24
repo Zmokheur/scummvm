@@ -31,6 +31,11 @@ MODULE_OBJS += \
 	versailles/toolbar.o
 endif
 
+ifdef ENABLE_EGYPT
+MODULE_OBJS += \
+	egypt/engine.o
+endif
+
 # This module can be built as a plugin
 ifeq ($(ENABLE_CRYOMNI3D), DYNAMIC_PLUGIN)
 PLUGIN := 1
