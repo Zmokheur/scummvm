@@ -52,6 +52,7 @@ struct EgyptZone {
 struct EgyptScene {
 	Common::String name;
 	Common::String warpName;
+	Common::String contextName;
 	Common::Array<EgyptZone> zones;
 	Common::Array<Common::String> scriptLines;
 	Common::Array<uint> activeZones;
@@ -101,14 +102,19 @@ private:
 	bool inspectWarpHeader(const Common::Path &filename, EgyptWarpHeader &header);
 	bool displayCurrentWarpPreview(const Common::Path &filename);
 	bool displayCurrentWarpRotation(const Graphics::Surface *frame);
+	bool handleWarpClick(const Common::Point &mousePos, const Common::Point &warpPoint);
+	bool zoneContainsWarpPoint(const EgyptZone &zone, const Common::Point &warpPoint) const;
+	const EgyptZone *findHoveredActiveZone(const Common::Point &warpPoint) const;
+	uint getCursorFrameForZone(const EgyptZone &zone) const;
+	uint resolveScriptZoneClick(const EgyptZone &zone) const;
+	bool shouldUseDirectWarpFallback(const EgyptZone &zone, uint zoneClick) const;
 	void parseZoneCommand(EgyptZone &zone);
 	void collectInitialActiveZones();
-	bool runPrototypeWarpScript();
+	bool runPrototypeWarpScript(int zoneClick = 0);
 	bool executeScriptBlock(const Common::Array<Common::String> &lines);
 	bool evaluateScriptCondition(const Common::String &expression) const;
 	int getScriptVariableValue(const Common::String &name) const;
 	void setScriptVariable(const Common::String &assignment);
-	int getPrototypeZoneClick() const;
 	bool queuePrototypeSceneChange(uint zoneId, const char *reason);
 	bool executePrototypeSceneLogic();
 	const EgyptZone *findZoneById(uint zoneId) const;
@@ -118,6 +124,7 @@ private:
 	Common::HashMap<Common::String, int> _scriptVariables;
 	Common::String _pendingWarpTarget;
 	Common::Array<EgyptInterfaceSprite *> _interfaceSprites;
+	uint _lastHoveredZoneId;
 };
 
 } // End of namespace Egypt

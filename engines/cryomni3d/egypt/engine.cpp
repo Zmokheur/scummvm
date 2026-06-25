@@ -52,7 +52,12 @@ enum EgyptCursorFrame {
 	kEgyptCursorNav5 = 5,
 	kEgyptCursorNav6 = 6,
 	kEgyptCursorNav7 = 7,
-	kEgyptCursorBusy = 13
+	kEgyptCursorTalk = 8,
+	kEgyptCursorUse = 9,
+	kEgyptCursorLook = 10,
+	kEgyptCursorWarpLabel = 11,
+	kEgyptCursorVisit = 12,
+	kEgyptCursorDefault = 13
 };
 
 bool decompressCpx5(Common::SeekableReadStream &stream, Common::Array<byte> &output) {
@@ -243,6 +248,32 @@ public:
 		return _xSpeed != 0. || _ySpeed != 0.;
 	}
 
+	Common::Point mapMouseCoords(const Common::Point &mouse) {
+		Common::Point pt;
+
+		if (_dirtyCoords)
+			updateImageCoords();
+
+		int smallX = mouse.x & 0xf;
+		int squareX = mouse.x >> 4;
+		int smallY = mouse.y & 0xf;
+		int squareY = mouse.y >> 4;
+
+		uint off = 82 * squareY + 2 * squareX;
+
+		pt.x = ((_imageCoords[off + 2] +
+		         smallY * ((_imageCoords[off + 84] - _imageCoords[off + 2]) >> 4) +
+		         (smallX * smallY) * ((_imageCoords[off + 86] - _imageCoords[off + 84]) >> 8) +
+		         (smallX * (16 - smallY)) * ((_imageCoords[off + 4] - _imageCoords[off + 2]) >> 8))
+		        & 0x07ff0000) >> 16;
+		pt.y = (_imageCoords[off + 3] +
+		        smallY * ((_imageCoords[off + 85] - _imageCoords[off + 3]) >> 4) +
+		        (smallX * smallY) * ((_imageCoords[off + 87] - _imageCoords[off + 85]) >> 8) +
+		        (smallX * (16 - smallY)) * ((_imageCoords[off + 5] - _imageCoords[off + 3]) >> 8)) >> 16;
+
+		return pt;
+	}
+
 	const Graphics::Surface *getSurface() {
 		if (!_sourceSurface)
 			return nullptr;
@@ -376,7 +407,8 @@ private:
 } // End of anonymous namespace
 
 CryOmni3DEngine_Egypt::CryOmni3DEngine_Egypt(OSystem *syst,
-		const CryOmni3DGameDescription *gamedesc) : CryOmni3DEngine(syst, gamedesc) {
+		const CryOmni3DGameDescription *gamedesc) : CryOmni3DEngine(syst, gamedesc),
+		_lastHoveredZoneId(uint(-1)) {
 }
 
 CryOmni3DEngine_Egypt::~CryOmni3DEngine_Egypt() {
@@ -407,8 +439,13 @@ Common::Error CryOmni3DEngine_Egypt::run() {
 	syncSoundSettings();
 	setupSprites();
 
-	loadScene("S01");
-	executePrototypeSceneLogic();
+	Common::String sceneName = "S01";
+	while (!shouldAbort() && !sceneName.empty()) {
+		loadScene(sceneName);
+		if (_pendingWarpTarget.empty())
+			break;
+		sceneName = _pendingWarpTarget;
+	}
 
 	return Common::kNoError;
 }
@@ -427,7 +464,7 @@ void CryOmni3DEngine_Egypt::setupSprites() {
 
 	warning("Egypt: loaded %u interface sprite(s) from INTERFAC.SPR", _interfaceSprites.size());
 	if (!_interfaceSprites.empty())
-		setInterfaceCursor(kEgyptCursorBusy);
+		setInterfaceCursor(kEgyptCursorDefault);
 }
 
 bool CryOmni3DEngine_Egypt::loadInterfaceSprites(const Common::Path &filename) {
@@ -497,6 +534,7 @@ bool CryOmni3DEngine_Egypt::setInterfaceCursor(uint spriteId) const {
 
 void CryOmni3DEngine_Egypt::loadScene(const Common::String &sceneName) {
 	_pendingWarpTarget.clear();
+	_lastHoveredZoneId = uint(-1);
 
 	Common::Path scenePath(Common::String::format("SPRITE/LEVEL1/%s.DEF", sceneName.c_str()));
 	parseSceneDefinition(scenePath, sceneName);
@@ -526,6 +564,7 @@ void CryOmni3DEngine_Egypt::parseSceneDefinition(const Common::Path &filename, c
 
 	_currentScene.name = sceneName;
 	_currentScene.warpName = sceneName + "_24.HNM";
+	_currentScene.contextName = sceneName;
 	_currentScene.zones.clear();
 	_currentScene.scriptLines.clear();
 	_currentScene.activeZones.clear();
@@ -537,22 +576,22 @@ void CryOmni3DEngine_Egypt::parseSceneDefinition(const Common::Path &filename, c
 			continue;
 
 		uint zoneId = 0;
-		uint left = 0;
-		uint top = 0;
-		uint right = 0;
-		uint bottom = 0;
+		uint rawTop = 0;
+		uint rawLeft = 0;
+		uint rawHeight = 0;
+		uint rawWidth = 0;
 		uint actionId = 0;
 		char commandBuffer[512];
 		commandBuffer[0] = '\0';
 
 		if (sscanf(line.c_str(), "Zone-%u %u-%u-%u-%u %u:%511[^\r\n]",
-		           &zoneId, &left, &top, &right, &bottom, &actionId, commandBuffer) == 7) {
+		           &zoneId, &rawTop, &rawLeft, &rawHeight, &rawWidth, &actionId, commandBuffer) == 7) {
 			EgyptZone zone;
 			zone.id = zoneId;
-			zone.left = left;
-			zone.top = top;
-			zone.right = right;
-			zone.bottom = bottom;
+			zone.left = rawLeft;
+			zone.top = rawTop;
+			zone.right = rawLeft + rawWidth;
+			zone.bottom = rawTop + rawHeight;
 			zone.actionId = actionId;
 			zone.commandName.clear();
 			zone.command = Common::String(commandBuffer);
@@ -561,13 +600,23 @@ void CryOmni3DEngine_Egypt::parseSceneDefinition(const Common::Path &filename, c
 			parseZoneCommand(zone);
 			_currentScene.zones.push_back(zone);
 
-			warning("Egypt: zone %03u bounds=%u-%u-%u-%u action=%u command=%s target=%s",
-			        zone.id, zone.left, zone.top, zone.right, zone.bottom,
+			warning("Egypt: zone %03u rect=(%u,%u %ux%u) action=%u command=%s target=%s",
+			        zone.id, zone.left, zone.top, rawWidth, rawHeight,
 			        zone.actionId, zone.command.c_str(), zone.targetWarp.c_str());
 			continue;
 		}
 
 		_currentScene.scriptLines.push_back(line);
+		if (line.hasPrefixIgnoreCase("centrage ")) {
+			Common::String context = line.substr(9);
+			const int equalsPos = context.find('=');
+			if (equalsPos > 0) {
+				context = context.substr(0, equalsPos);
+				context.trim();
+				if (!context.empty())
+					_currentScene.contextName = context;
+			}
+		}
 		logScriptLine(line);
 	}
 }
@@ -665,7 +714,7 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpRotation(const Graphics::Surface *
 		if (setInterfaceCursor(cursorId))
 			return;
 
-		const uint fallbackCursor = (availableCursors > kEgyptCursorBusy) ? kEgyptCursorBusy : 0;
+		const uint fallbackCursor = (availableCursors > kEgyptCursorDefault) ? kEgyptCursorDefault : 0;
 		if (availableCursors > 0) {
 			warning("Egypt: cursor %u unavailable, fallback to cursor %u (%u available)",
 			        cursorId, fallbackCursor, availableCursors);
@@ -676,7 +725,7 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpRotation(const Graphics::Surface *
 	clearKeys();
 	waitMouseRelease();
 	showMouse(true);
-	setRotationCursor(kEgyptCursorBusy);
+	setRotationCursor(kEgyptCursorDefault);
 
 	warning("Egypt: interactive rotation enabled for %s, click or press space to continue",
 	        _currentScene.name.c_str());
@@ -689,7 +738,7 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpRotation(const Graphics::Surface *
 		Common::Point mouse = getMousePos();
 		int xDelta = 0;
 		int yDelta = 0;
-		uint movingCursor = kEgyptCursorBusy;
+		uint movingCursor = kEgyptCursorDefault;
 
 		bool topZone = false;
 		bool bottomZone = false;
@@ -732,9 +781,20 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpRotation(const Graphics::Surface *
 		xDelta /= 5;
 		yDelta /= 5;
 
+		Common::Point warpPoint = renderer.mapMouseCoords(mouse);
+		const EgyptZone *hoveredZone = findHoveredActiveZone(warpPoint);
+		if (hoveredZone)
+			movingCursor = getCursorFrameForZone(*hoveredZone);
+
 		Common::KeyState key = getNextKey();
+		if (getCurrentMouseButton() == 1) {
+			if (handleWarpClick(mouse, warpPoint))
+				exitRotation = true;
+			waitMouseRelease();
+		}
+
 		if (key.keycode == Common::KEYCODE_SPACE || key.keycode == Common::KEYCODE_RETURN ||
-		    key.keycode == Common::KEYCODE_ESCAPE || getCurrentMouseButton() == 1) {
+		    key.keycode == Common::KEYCODE_ESCAPE) {
 			exitRotation = true;
 		}
 
@@ -749,6 +809,20 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpRotation(const Graphics::Surface *
 			yDelta += 5;
 
 		setRotationCursor(movingCursor);
+
+		if (getCurrentMouseButton() == 0) {
+			if (hoveredZone) {
+				if (_lastHoveredZoneId != hoveredZone->id) {
+					warning("Egypt: hover %s mouse=%d,%d warp=%d,%d zone=%03u action=%u cursor=%u target=%s",
+					        _currentScene.name.c_str(), mouse.x, mouse.y, warpPoint.x, warpPoint.y,
+					        hoveredZone->id, hoveredZone->actionId, movingCursor,
+					        hoveredZone->targetWarp.c_str());
+					_lastHoveredZoneId = hoveredZone->id;
+				}
+			} else if (_lastHoveredZoneId != uint(-1)) {
+				_lastHoveredZoneId = uint(-1);
+			}
+		}
 
 		if (firstDraw || xDelta != 0 || yDelta != 0 || renderer.hasSpeed()) {
 			renderer.updateCoords(xDelta, -yDelta, true);
@@ -768,6 +842,103 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpRotation(const Graphics::Surface *
 	waitMouseRelease();
 	clearKeys();
 	showMouse(false);
+	return true;
+}
+
+bool CryOmni3DEngine_Egypt::handleWarpClick(const Common::Point &mousePos, const Common::Point &warpPoint) {
+	for (Common::Array<uint>::const_iterator it = _currentScene.activeZones.begin();
+	     it != _currentScene.activeZones.end(); ++it) {
+		const EgyptZone *zone = findZoneById(*it);
+		if (!zone || !zoneContainsWarpPoint(*zone, warpPoint))
+			continue;
+
+		const uint zoneClick = resolveScriptZoneClick(*zone);
+
+		warning("Egypt: click %s mouse=%d,%d warp=%d,%d zone=%03u zoneclic=%u command=%s",
+		        _currentScene.name.c_str(), mousePos.x, mousePos.y, warpPoint.x, warpPoint.y,
+		        zone->id, zoneClick, zone->command.c_str());
+
+		_pendingWarpTarget.clear();
+		runPrototypeWarpScript(zoneClick);
+		if (_pendingWarpTarget.empty() && shouldUseDirectWarpFallback(*zone, zoneClick) &&
+		    zone->commandName.equalsIgnoreCase("ALLER_WARP") &&
+		    !zone->targetWarp.empty()) {
+			_pendingWarpTarget = zone->targetWarp;
+			warning("Egypt: direct warp fallback from zone %03u to %s",
+			        zone->id, _pendingWarpTarget.c_str());
+		}
+		return !_pendingWarpTarget.empty();
+	}
+
+	warning("Egypt: click %s mouse=%d,%d warp=%d,%d no active zone",
+	        _currentScene.name.c_str(), mousePos.x, mousePos.y, warpPoint.x, warpPoint.y);
+	return false;
+}
+
+bool CryOmni3DEngine_Egypt::zoneContainsWarpPoint(const EgyptZone &zone, const Common::Point &warpPoint) const {
+	return warpPoint.x >= (int)zone.left && warpPoint.x < (int)zone.right &&
+	       warpPoint.y >= (int)zone.top && warpPoint.y < (int)zone.bottom;
+}
+
+const EgyptZone *CryOmni3DEngine_Egypt::findHoveredActiveZone(const Common::Point &warpPoint) const {
+	for (Common::Array<uint>::const_iterator it = _currentScene.activeZones.begin();
+	     it != _currentScene.activeZones.end(); ++it) {
+		const EgyptZone *zone = findZoneById(*it);
+		if (zone && zoneContainsWarpPoint(*zone, warpPoint))
+			return zone;
+	}
+
+	return nullptr;
+}
+
+uint CryOmni3DEngine_Egypt::getCursorFrameForZone(const EgyptZone &zone) const {
+	switch (zone.actionId) {
+	case 1:
+		return kEgyptCursorTalk;
+	case 2:
+	case 4:
+	case 5:
+		return kEgyptCursorUse;
+	case 3:
+		return kEgyptCursorLook;
+	case 6:
+		if (zone.command.find('/') == Common::String::npos)
+			return kEgyptCursorDefault;
+		if (getScriptVariableValue("FlagVisite") != 0)
+			return kEgyptCursorVisit;
+		if (_currentScene.contextName.equalsIgnoreCase("JOUR") ||
+		    _currentScene.contextName.equalsIgnoreCase("NUIT"))
+			return kEgyptCursorDefault;
+		return kEgyptCursorVisit;
+	case 7:
+		return kEgyptCursorVisit;
+	case 9:
+	case 10:
+		return kEgyptCursorWarpLabel;
+	case 8:
+	default:
+		return kEgyptCursorDefault;
+	}
+}
+
+uint CryOmni3DEngine_Egypt::resolveScriptZoneClick(const EgyptZone &zone) const {
+	if (_currentScene.name.equalsIgnoreCase("S01")) {
+		if (zone.id == 1 && getScriptVariableValue("FlagEntreeS01") == 0)
+			return 1;
+		if (zone.id == 2)
+			return 2;
+	}
+
+	return zone.id;
+}
+
+bool CryOmni3DEngine_Egypt::shouldUseDirectWarpFallback(const EgyptZone &zone, uint zoneClick) const {
+	if (_currentScene.name.equalsIgnoreCase("S01") && zone.id == 1 &&
+	    getScriptVariableValue("FlagEntreeS01") == 0 && zoneClick == 1) {
+		warning("Egypt: keeping scripted intro path for first S01 click on zone %03u", zone.id);
+		return false;
+	}
+
 	return true;
 }
 
@@ -813,7 +984,7 @@ void CryOmni3DEngine_Egypt::collectInitialActiveZones() {
 	        _currentScene.name.c_str(), activeList.c_str());
 }
 
-bool CryOmni3DEngine_Egypt::runPrototypeWarpScript() {
+bool CryOmni3DEngine_Egypt::runPrototypeWarpScript(int zoneClick) {
 	Common::Array<Common::String> blockLines;
 	bool inWarpBlock = false;
 
@@ -838,16 +1009,16 @@ bool CryOmni3DEngine_Egypt::runPrototypeWarpScript() {
 		return false;
 	}
 
+	_scriptVariables["zoneclic"] = zoneClick;
+	warning("Egypt: prototype zoneclic=%d for scene %s",
+	        zoneClick, _currentScene.name.c_str());
+
 	return executeScriptBlock(blockLines);
 }
 
 bool CryOmni3DEngine_Egypt::executeScriptBlock(const Common::Array<Common::String> &lines) {
 	Common::HashMap<Common::String, uint> labels;
 	bool producedState = false;
-
-	_scriptVariables["zoneclic"] = getPrototypeZoneClick();
-	warning("Egypt: prototype zoneclic=%d for scene %s",
-	        _scriptVariables["zoneclic"], _currentScene.name.c_str());
 
 	for (uint i = 0; i < lines.size(); ++i) {
 		if (lines[i].hasSuffix(":")) {
@@ -943,13 +1114,6 @@ bool CryOmni3DEngine_Egypt::executeScriptBlock(const Common::Array<Common::Strin
 	return producedState;
 }
 
-int CryOmni3DEngine_Egypt::getPrototypeZoneClick() const {
-	if (_currentScene.name.equalsIgnoreCase("S01") && getScriptVariableValue("FlagEntreeS01") == 0)
-		return 1;
-
-	return 0;
-}
-
 bool CryOmni3DEngine_Egypt::queuePrototypeSceneChange(uint zoneId, const char *reason) {
 	const EgyptZone *zone = findZoneById(zoneId);
 	if (!zone) {
@@ -1018,29 +1182,8 @@ void CryOmni3DEngine_Egypt::setScriptVariable(const Common::String &assignment) 
 
 bool CryOmni3DEngine_Egypt::executePrototypeSceneLogic() {
 	if (!_pendingWarpTarget.empty()) {
-		Common::String targetScene = _pendingWarpTarget;
-		warning("Egypt: prototype executes scripted transition from %s to %s",
-		        _currentScene.name.c_str(), targetScene.c_str());
-		loadScene(targetScene);
 		return true;
 	}
-
-	for (Common::Array<uint>::const_iterator it = _currentScene.activeZones.begin();
-	     it != _currentScene.activeZones.end(); ++it) {
-		const EgyptZone *zone = findZoneById(*it);
-		if (!zone)
-			continue;
-
-		if (zone->commandName.equalsIgnoreCase("ALLER_WARP") && !zone->targetWarp.empty()) {
-			warning("Egypt: prototype executes zone %03u from %s to %s",
-			        zone->id, _currentScene.name.c_str(), zone->targetWarp.c_str());
-			loadScene(zone->targetWarp);
-			return true;
-		}
-	}
-
-	warning("Egypt: no executable ALLER_WARP found in active zones for %s",
-	        _currentScene.name.c_str());
 	return false;
 }
 
