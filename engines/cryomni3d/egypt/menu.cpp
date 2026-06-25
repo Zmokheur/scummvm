@@ -19,6 +19,7 @@
  *
  */
 
+#include <cstdlib>
 #include <cstring>
 
 #include "common/file.h"
@@ -139,14 +140,24 @@ bool CryOmni3DEngine_Egypt::loadMessageLabels() {
 		if (messageId.empty() || text.empty())
 			continue;
 
+		EgyptMessageEntry entry;
+		entry.text = text;
+
 		int suffixPos = text.find("//");
 		if (suffixPos >= 0) {
-			text = text.substr(0, suffixPos);
-			text.trim();
+			Common::String suffix = text.substr(suffixPos + 2);
+			suffix.trim();
+			char *endPtr = nullptr;
+			const long documentationId = strtol(suffix.c_str(), &endPtr, 10);
+			if (endPtr != suffix.c_str() && endPtr && *endPtr == '\0')
+				entry.documentationId = (int)documentationId;
+
+			entry.text = text.substr(0, suffixPos);
+			entry.text.trim();
 		}
 
-		if (!text.empty())
-			_messageLabels[messageId] = text;
+		if (!entry.text.empty())
+			_messageLabels[messageId] = entry;
 	}
 
 	_messageLabelsLoaded = true;
@@ -157,10 +168,10 @@ Common::String CryOmni3DEngine_Egypt::resolveMessageLabel(const Common::String &
 	if (messageId.empty())
 		return Common::String();
 
-	Common::HashMap<Common::String, Common::String, Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo>::const_iterator it =
+	Common::HashMap<Common::String, EgyptMessageEntry, Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo>::const_iterator it =
 		_messageLabels.find(messageId);
 	if (it != _messageLabels.end())
-		return it->_value;
+		return it->_value.text;
 
 	return messageId;
 }

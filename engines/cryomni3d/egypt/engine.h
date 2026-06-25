@@ -40,6 +40,11 @@ struct Surface;
 namespace CryOmni3D {
 namespace Egypt {
 
+struct EgyptMessageEntry {
+	Common::String text;
+	int documentationId = -1;
+};
+
 class CryOmni3DEngine_Egypt : public CryOmni3DEngine {
 public:
 	CryOmni3DEngine_Egypt(OSystem *syst, const CryOmni3DGameDescription *gamedesc);
@@ -82,6 +87,9 @@ private:
 	bool loadMenuLabels();
 	bool loadMessageLabels();
 	Common::String resolveMessageLabel(const Common::String &messageId) const;
+	bool isDocumentationZone(const EgyptZone &zone) const;
+	int resolveDocumentationIdForZone(const EgyptZone &zone, Common::String *source = nullptr) const;
+	void displayZoneDocumentation(const EgyptZone &zone);
 	Common::String getHoverTextForZone(const EgyptZone *zone) const;
 	Common::Path resolveSceneDefinitionPath(const Common::String &sceneName) const;
 	void loadScene(const Common::String &sceneName);
@@ -152,7 +160,7 @@ private:
 	Common::Array<EgyptInterfaceSprite *> _interfaceSprites;
 	Common::Array<Common::String> _menuLabels;
 	bool _menuLabelsLoaded = false;
-	Common::HashMap<Common::String, Common::String, Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo> _messageLabels;
+	Common::HashMap<Common::String, EgyptMessageEntry, Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo> _messageLabels;
 	bool _messageLabelsLoaded = false;
 	uint _lastHoveredZoneId;
 };

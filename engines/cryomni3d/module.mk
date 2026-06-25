@@ -35,6 +35,7 @@ endif
 ifdef ENABLE_EGYPT
 MODULE_OBJS += \
 	egypt/cursor.o \
+	egypt/documentation.o \
 	egypt/engine.o \
 	egypt/menu.o \
 	egypt/panorama.o \

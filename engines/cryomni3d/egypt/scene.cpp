@@ -172,6 +172,10 @@ void CryOmni3DEngine_Egypt::parseZoneCommand(EgyptZone &zone) {
 		}
 		if (zone.label.empty())
 			zone.label = token;
+		else if (zone.extraParam.empty())
+			zone.extraParam = token;
+		else
+			zone.extraParam += " " + token;
 	}
 }
 

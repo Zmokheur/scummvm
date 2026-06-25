@@ -78,6 +78,11 @@ bool CryOmni3DEngine_Egypt::handleWarpClick(const Common::Point &mousePos, const
 		        _currentScene.name.c_str(), mousePos.x, mousePos.y, warpPoint.x, warpPoint.y,
 		        zone->id, zoneClick, zone->command.c_str());
 
+		if (isDocumentationZone(*zone)) {
+			displayZoneDocumentation(*zone);
+			return false;
+		}
+
 		_pendingWarpTarget.clear();
 		runPrototypeWarpScript(zoneClick, currentAlpha, currentBeta);
 		if (_pendingWarpTarget.empty() && shouldUseDirectWarpFallback(*zone, zoneClick) &&
@@ -102,6 +107,13 @@ bool CryOmni3DEngine_Egypt::zoneContainsWarpPoint(const EgyptZone &zone, const C
 }
 
 const EgyptZone *CryOmni3DEngine_Egypt::findHoveredActiveZone(const Common::Point &warpPoint) const {
+	for (Common::Array<uint>::const_iterator it = _currentScene.activeZones.begin();
+	     it != _currentScene.activeZones.end(); ++it) {
+		const EgyptZone *zone = findZoneById(*it);
+		if (zone && zoneContainsWarpPoint(*zone, warpPoint))
+			return zone;
+	}
+
 	return findInteractiveZone(warpPoint);
 }
 
