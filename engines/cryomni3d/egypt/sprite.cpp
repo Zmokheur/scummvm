@@ -64,8 +64,10 @@ bool CryOmni3DEngine_Egypt::loadInterfaceSprites(const Common::Path &filename) {
 	for (uint i = 0; i < spriteCount; ++i) {
 		const uint entryOffset = i * 8;
 		const uint32 pixelOffset = READ_LE_UINT32(decompressed.data() + entryOffset);
-		const uint16 width = READ_LE_UINT16(decompressed.data() + entryOffset + 4);
-		const uint16 height = READ_LE_UINT16(decompressed.data() + entryOffset + 6);
+		// SPR table stores [height][width] at offsets +4/+6 (confirmed from EXE 0x819b60:
+		// SECOND_FIELD at +6 is used as row stride, outer loop runs FIRST_FIELD times).
+		const uint16 height = READ_LE_UINT16(decompressed.data() + entryOffset + 4);
+		const uint16 width  = READ_LE_UINT16(decompressed.data() + entryOffset + 6);
 		const uint32 pixelDataSize = (uint32)width * (uint32)height * 2;
 
 		if (width == 0 || height == 0 || pixelOffset + pixelDataSize > decompressed.size()) {
@@ -76,6 +78,8 @@ bool CryOmni3DEngine_Egypt::loadInterfaceSprites(const Common::Path &filename) {
 
 		EgyptInterfaceSprite *sprite = new EgyptInterfaceSprite();
 		sprite->surface.create(width, height, kEgyptSpriteFormat);
+		sprite->hotspotX = width / 2;
+		sprite->hotspotY = height / 2;
 		memcpy(sprite->surface.getPixels(), decompressed.data() + pixelOffset, pixelDataSize);
 
 		sprite->mask.resize(width * height);
