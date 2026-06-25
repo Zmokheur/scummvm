@@ -459,26 +459,5 @@ Common::String CryOmni3DEngine_Egypt::startVisitMode() {
 	return "JOUR";
 }
 
-void CryOmni3DEngine_Egypt::startDocumentationModePlaceholder() {
-	warning("EGYPT_MENU: selection=Documentation asset=placeholder reason=not_implemented");
-
-	Common::Array<Common::String> lines;
-	lines.push_back("Base documentaire not implemented yet");
-	lines.push_back("Cliquez ou appuyez sur une touche pour revenir au menu");
-	drawSimpleScreen("Egypt 1156", lines);
-
-	clearKeys();
-	waitMouseRelease();
-	while (!shouldAbort()) {
-		pollEvents();
-		if (getCurrentMouseButton() == 1 || getNextKey().keycode != Common::KEYCODE_INVALID)
-			break;
-		g_system->updateScreen();
-		g_system->delayMillis(10);
-	}
-	clearKeys();
-	waitMouseRelease();
-}
-
 } // End of namespace Egypt
 } // End of namespace CryOmni3D

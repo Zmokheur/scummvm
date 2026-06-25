@@ -88,7 +88,7 @@ Common::Error CryOmni3DEngine_Egypt::run() {
 			sceneName = startVisitMode();
 			break;
 		case EgyptStartupMode::kDocumentation:
-			startDocumentationModePlaceholder();
+			startDocumentationMode();
 			break;
 		case EgyptStartupMode::kMainMenu:
 		case EgyptStartupMode::kQuit:

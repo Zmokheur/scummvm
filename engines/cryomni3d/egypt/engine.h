@@ -45,6 +45,14 @@ struct EgyptMessageEntry {
 	int documentationId = -1;
 };
 
+struct EgyptDocumentationRecord {
+	int id = -1;
+	Common::String title;
+	Common::String assetName;
+	Common::String body;
+	Common::Array<int> links;
+};
+
 class CryOmni3DEngine_Egypt : public CryOmni3DEngine {
 public:
 	CryOmni3DEngine_Egypt(OSystem *syst, const CryOmni3DGameDescription *gamedesc);
@@ -78,7 +86,7 @@ private:
 	EgyptStartupMode showMainMenu();
 	Common::String startStoryModePrototype();
 	Common::String startVisitMode();
-	void startDocumentationModePlaceholder();
+	void startDocumentationMode();
 	void playStartupLogoIfPresent();
 	bool loadWrappedTgaSurface(const Common::Path &filename, Graphics::ManagedSurface &surface) const;
 	void drawSimpleScreen(const Common::String &title, const Common::Array<Common::String> &lines,
@@ -86,6 +94,7 @@ private:
 	void drawMenuScreen(Graphics::ManagedSurface &surface, int hoveredEntry, bool hasBackground) const;
 	bool loadMenuLabels();
 	bool loadMessageLabels();
+	bool loadDocumentationData();
 	Common::String resolveMessageLabel(const Common::String &messageId) const;
 	bool isDocumentationZone(const EgyptZone &zone) const;
 	int resolveDocumentationIdForZone(const EgyptZone &zone, Common::String *source = nullptr) const;
@@ -162,6 +171,9 @@ private:
 	bool _menuLabelsLoaded = false;
 	Common::HashMap<Common::String, EgyptMessageEntry, Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo> _messageLabels;
 	bool _messageLabelsLoaded = false;
+	Common::Array<EgyptDocumentationRecord> _documentationRecords;
+	Common::HashMap<int, Common::Array<int> > _documentationTree;
+	bool _documentationDataLoaded = false;
 	uint _lastHoveredZoneId;
 };
 

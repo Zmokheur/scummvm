@@ -21,8 +21,10 @@
 
 #include <cstdlib>
 
+#include "common/file.h"
 #include "common/system.h"
 #include "common/textconsole.h"
+#include "common/tokenizer.h"
 
 #include "graphics/font.h"
 #include "graphics/fontman.h"
@@ -34,6 +36,12 @@ namespace CryOmni3D {
 namespace Egypt {
 
 namespace {
+
+const int kEgyptDocumentationThemeCount = 5;
+const int kEgyptDocumentationThemeIds[kEgyptDocumentationThemeCount] = { 1, 2, 3, 4, 5 };
+const char *const kEgyptDocumentationThemeLabels[kEgyptDocumentationThemeCount] = {
+	"La terre", "Le temps", "Les hommes", "Le pharaon", "Les dieux"
+};
 
 bool parseIntegerToken(const Common::String &token, int &value) {
 	if (token.empty())
@@ -48,6 +56,37 @@ bool parseIntegerToken(const Common::String &token, int &value) {
 	return true;
 }
 
+bool parseDocumentationHeader(const Common::String &line, int &id, Common::String &title) {
+	const int dotPos = line.find('.');
+	if (dotPos <= 0)
+		return false;
+
+	Common::String idToken = line.substr(0, dotPos);
+	idToken.trim();
+	if (!parseIntegerToken(idToken, id))
+		return false;
+
+	title = line.substr(dotPos + 1);
+	title.trim();
+	return true;
+}
+
+Common::String sanitizeDocumentationText(const Common::String &text) {
+	Common::String sanitized;
+
+	for (uint i = 0; i < text.size(); ++i) {
+		const char ch = text[i];
+		if (ch == '#')
+			continue;
+		if (ch == '&')
+			sanitized += " - ";
+		else
+			sanitized += ch;
+	}
+
+	return sanitized;
+}
+
 void drawCenteredLine(Graphics::ManagedSurface &surface, const Graphics::Font *font,
                       const Common::String &text, int y, uint32 color) {
 	if (!font)
@@ -57,7 +96,175 @@ void drawCenteredLine(Graphics::ManagedSurface &surface, const Graphics::Font *f
 	font->drawString(&surface, text, x, y, surface.w, color);
 }
 
+Common::Path documentationAssetPathFromName(const Common::String &assetName) {
+	if (assetName.empty())
+		return Common::Path();
+
+	if (assetName.hasPrefixIgnoreCase("F"))
+		return Common::Path(Common::String::format("SPRITE/BASEDOC/%s.TGA", assetName.c_str()));
+
+	if (assetName.hasPrefixIgnoreCase("PCD"))
+		return Common::Path(Common::String::format("SPRITE/BASEDOC/%s.TGA", assetName.substr(3).c_str()));
+
+	return Common::Path();
+}
+
 } // End of anonymous namespace
+
+static const EgyptDocumentationRecord *findDocumentationRecord(const Common::Array<EgyptDocumentationRecord> &records, int id) {
+	for (Common::Array<EgyptDocumentationRecord>::const_iterator it = records.begin(); it != records.end(); ++it) {
+		if (it->id == id)
+			return &(*it);
+	}
+
+	return nullptr;
+}
+
+static void collectDocumentationLeafRecords(const Common::Array<EgyptDocumentationRecord> &records,
+                                            const Common::HashMap<int, Common::Array<int> > &tree,
+                                            int nodeId, Common::Array<int> &out) {
+	const EgyptDocumentationRecord *record = findDocumentationRecord(records, nodeId);
+	if (record) {
+		bool alreadyPresent = false;
+		for (Common::Array<int>::const_iterator it = out.begin(); it != out.end(); ++it) {
+			if (*it == nodeId) {
+				alreadyPresent = true;
+				break;
+			}
+		}
+		if (!alreadyPresent)
+			out.push_back(nodeId);
+	}
+
+	Common::HashMap<int, Common::Array<int> >::const_iterator it = tree.find(nodeId);
+	if (it == tree.end())
+		return;
+
+	for (Common::Array<int>::const_iterator child = it->_value.begin(); child != it->_value.end(); ++child)
+		collectDocumentationLeafRecords(records, tree, *child, out);
+}
+
+bool CryOmni3DEngine_Egypt::loadDocumentationData() {
+	if (_documentationDataLoaded)
+		return true;
+
+	_documentationRecords.clear();
+	_documentationTree.clear();
+
+	Common::File docFile;
+	if (!docFile.open(Common::Path("REF/FR/ESPDOC.TXT"))) {
+		warning("Egypt: failed to open REF/FR/ESPDOC.TXT");
+		return false;
+	}
+
+	Common::Array<Common::String> lines;
+	while (!docFile.eos())
+		lines.push_back(docFile.readLine());
+
+	for (uint i = 0; i < lines.size(); ++i) {
+		Common::String line = lines[i];
+		line.trim();
+
+		int recordId = -1;
+		Common::String title;
+		if (!parseDocumentationHeader(line, recordId, title))
+			continue;
+
+		EgyptDocumentationRecord record;
+		record.id = recordId;
+		record.title = sanitizeDocumentationText(title);
+
+		for (++i; i < lines.size(); ++i) {
+			Common::String current = lines[i];
+			current.trim();
+
+			int nextId = -1;
+			Common::String nextTitle;
+			if (parseDocumentationHeader(current, nextId, nextTitle)) {
+				--i;
+				break;
+			}
+
+			if (current.empty()) {
+				if (!record.body.empty() && !record.body.hasSuffix("\n\n"))
+					record.body += "\n";
+				continue;
+			}
+
+			if (current.hasPrefix("<")) {
+				const int commaPos = current.find(',');
+				const int endPos = current.find('>');
+				if (commaPos > 1)
+					record.assetName = current.substr(1, commaPos - 1);
+				else if (endPos > 1)
+					record.assetName = current.substr(1, endPos - 1);
+				record.assetName.trim();
+				continue;
+			}
+
+			if (current.hasPrefix("/") && current.hasSuffix("//")) {
+				Common::String linkId = current.substr(1, current.size() - 3);
+				linkId.trim();
+				int relatedId = -1;
+				if (parseIntegerToken(linkId, relatedId))
+					record.links.push_back(relatedId);
+				continue;
+			}
+
+			if (current.hasPrefix("@"))
+				continue;
+
+			current = sanitizeDocumentationText(current);
+			if (!record.body.empty() && !record.body.hasSuffix("\n"))
+				record.body += "\n";
+			record.body += current;
+		}
+
+		record.body.trim();
+		_documentationRecords.push_back(record);
+	}
+
+	Common::File treeFile;
+	if (!treeFile.open(Common::Path("REF/FR/ESPARBO.TXT"))) {
+		warning("Egypt: failed to open REF/FR/ESPARBO.TXT");
+		return false;
+	}
+
+	while (!treeFile.eos()) {
+		Common::String line = treeFile.readLine();
+		line.trim();
+		if (line.empty())
+			continue;
+
+		const int colonPos = line.find(':');
+		if (colonPos <= 0)
+			continue;
+
+		Common::String parentToken = line.substr(0, colonPos);
+		parentToken.trim();
+
+		int parentId = -1;
+		if (!parseIntegerToken(parentToken, parentId))
+			continue;
+
+		Common::String childrenSpec = line.substr(colonPos + 1);
+		childrenSpec.trim();
+		Common::StringTokenizer tokenizer(childrenSpec);
+		Common::Array<int> children;
+		while (!tokenizer.empty()) {
+			int childId = -1;
+			if (parseIntegerToken(tokenizer.nextToken(), childId))
+				children.push_back(childId);
+		}
+
+		_documentationTree[parentId] = children;
+	}
+
+	_documentationDataLoaded = true;
+	warning("Egypt: loaded %u documentation record(s) and %u documentation tree node(s)",
+	        _documentationRecords.size(), _documentationTree.size());
+	return true;
+}
 
 bool CryOmni3DEngine_Egypt::isDocumentationZone(const EgyptZone &zone) const {
 	if (zone.actionId != 6)
@@ -170,6 +377,293 @@ void CryOmni3DEngine_Egypt::displayZoneDocumentation(const EgyptZone &zone) {
 
 	clearKeys();
 	waitMouseRelease();
+}
+
+void CryOmni3DEngine_Egypt::startDocumentationMode() {
+	warning("EGYPT_MENU: selection=Documentation mode=autonomous status=prototype");
+
+	if (!loadDocumentationData()) {
+		Common::Array<Common::String> lines;
+		lines.push_back("Documentation data not available");
+		lines.push_back("Cliquez ou appuyez sur une touche pour revenir au menu");
+		drawSimpleScreen("Egypt 1156", lines);
+		clearKeys();
+		waitMouseRelease();
+		while (!shouldAbort()) {
+			pollEvents();
+			if (getCurrentMouseButton() == 1 || getNextKey().keycode != Common::KEYCODE_INVALID)
+				break;
+			g_system->updateScreen();
+			g_system->delayMillis(10);
+		}
+		clearKeys();
+		waitMouseRelease();
+		return;
+	}
+
+	Graphics::ManagedSurface summaryBackground;
+	Graphics::ManagedSurface viewerBackground;
+	const bool hasSummaryBackground = loadWrappedTgaSurface(Common::Path("SPRITE/SOMMAIRE.TGA"), summaryBackground);
+	const bool hasViewerBackground = loadWrappedTgaSurface(Common::Path("SPRITE/FONDBLEU.TGA"), viewerBackground);
+	if (hasSummaryBackground)
+		warning("EGYPT_MENU: documentation_asset=SOMMAIRE.TGA status=loaded");
+	if (hasViewerBackground)
+		warning("EGYPT_MENU: documentation_asset=FONDBLEU.TGA status=loaded");
+
+	showMouse(true);
+	setInterfaceCursor(kEgyptCursorDefault);
+	clearKeys();
+	waitMouseRelease();
+
+	int selectedTheme = 0;
+	bool exitDocumentation = false;
+	while (!shouldAbort() && !exitDocumentation) {
+		Graphics::ManagedSurface summarySurface(640, 480, g_system->getScreenFormat());
+		if (hasSummaryBackground)
+			summarySurface.blitFrom(summaryBackground);
+		else if (hasViewerBackground)
+			summarySurface.blitFrom(viewerBackground);
+		else
+			summarySurface.clear(summarySurface.format.RGBToColor(0, 0, 0));
+
+		const uint32 panelColor = summarySurface.format.RGBToColor(14, 16, 22);
+		const uint32 borderColor = summarySurface.format.RGBToColor(172, 130, 52);
+		const uint32 titleColor = summarySurface.format.RGBToColor(245, 219, 160);
+		const uint32 textColor = summarySurface.format.RGBToColor(242, 235, 218);
+		const uint32 selectedColor = summarySurface.format.RGBToColor(255, 220, 98);
+		const uint32 hintColor = summarySurface.format.RGBToColor(182, 182, 182);
+		const Common::Rect panel(54, 186, 586, 440);
+		summarySurface.fillRect(panel, panelColor);
+		summarySurface.frameRect(panel, borderColor);
+
+		const Graphics::Font *titleFont = FontMan.getFontByUsage(Graphics::FontManager::kBigGUIFont);
+		const Graphics::Font *bodyFont = FontMan.getFontByUsage(Graphics::FontManager::kGUIFont);
+		if (!titleFont)
+			titleFont = bodyFont;
+		if (!bodyFont)
+			bodyFont = titleFont;
+		if (!bodyFont) {
+			exitDocumentation = true;
+			break;
+		}
+
+		drawCenteredLine(summarySurface, titleFont, "Espace documentaire", 206, titleColor);
+
+		Common::Rect themeBoxes[kEgyptDocumentationThemeCount];
+		int y = 254;
+		for (int i = 0; i < kEgyptDocumentationThemeCount; ++i, y += 32) {
+			themeBoxes[i] = Common::Rect(100, y - 2, 540, y + 22);
+			const uint32 color = i == selectedTheme ? selectedColor : textColor;
+			Common::String line = Common::String::format("[%d] %s", i + 1, kEgyptDocumentationThemeLabels[i]);
+			bodyFont->drawString(&summarySurface, line, 112, y, 400, color);
+		}
+
+		drawCenteredLine(summarySurface, bodyFont,
+		                 "Fleches: choisir  Entree: ouvrir  Echap: retour menu",
+		                 408, hintColor);
+
+		g_system->copyRectToScreen(summarySurface.getPixels(), summarySurface.pitch, 0, 0, summarySurface.w, summarySurface.h);
+		g_system->updateScreen();
+
+		bool themeChosen = false;
+		while (!shouldAbort() && !exitDocumentation && !themeChosen) {
+			pollEvents();
+			const Common::Point mouse = getMousePos();
+			for (int i = 0; i < kEgyptDocumentationThemeCount; ++i) {
+				if (themeBoxes[i].contains(mouse) && selectedTheme != i) {
+					selectedTheme = i;
+					themeChosen = true;
+					break;
+				}
+			}
+			if (themeChosen)
+				break;
+
+			if (getCurrentMouseButton() == 1) {
+				for (int i = 0; i < kEgyptDocumentationThemeCount; ++i) {
+					if (themeBoxes[i].contains(mouse)) {
+						selectedTheme = i;
+						themeChosen = true;
+						waitMouseRelease();
+						break;
+					}
+				}
+			}
+
+			const Common::KeyCode keycode = getNextKey().keycode;
+			if (keycode == Common::KEYCODE_ESCAPE) {
+				exitDocumentation = true;
+				break;
+			} else if (keycode == Common::KEYCODE_UP) {
+				selectedTheme = (selectedTheme + kEgyptDocumentationThemeCount - 1) % kEgyptDocumentationThemeCount;
+				themeChosen = true;
+			} else if (keycode == Common::KEYCODE_DOWN) {
+				selectedTheme = (selectedTheme + 1) % kEgyptDocumentationThemeCount;
+				themeChosen = true;
+			} else if ((keycode >= Common::KEYCODE_1 && keycode <= Common::KEYCODE_5) ||
+			           (keycode >= Common::KEYCODE_KP1 && keycode <= Common::KEYCODE_KP5)) {
+				selectedTheme = keycode >= Common::KEYCODE_KP1 ? keycode - Common::KEYCODE_KP1 : keycode - Common::KEYCODE_1;
+				themeChosen = true;
+			} else if (keycode == Common::KEYCODE_RETURN || keycode == Common::KEYCODE_SPACE) {
+				themeChosen = true;
+			}
+
+			g_system->delayMillis(10);
+		}
+
+		if (exitDocumentation)
+			break;
+
+		Common::Array<int> themeRecords;
+		collectDocumentationLeafRecords(_documentationRecords, _documentationTree,
+		                                kEgyptDocumentationThemeIds[selectedTheme], themeRecords);
+		if (themeRecords.empty()) {
+			warning("EGYPT_MENU: documentation_theme=%d label=%s has no record",
+			        kEgyptDocumentationThemeIds[selectedTheme], kEgyptDocumentationThemeLabels[selectedTheme]);
+			continue;
+		}
+
+		int currentRecordIndex = 0;
+		int scrollOffset = 0;
+		bool backToSummary = false;
+		while (!shouldAbort() && !exitDocumentation && !backToSummary) {
+			const EgyptDocumentationRecord *record = findDocumentationRecord(_documentationRecords, themeRecords[currentRecordIndex]);
+			if (!record) {
+				backToSummary = true;
+				break;
+			}
+
+			Graphics::ManagedSurface recordSurface(640, 480, g_system->getScreenFormat());
+			if (hasViewerBackground)
+				recordSurface.blitFrom(viewerBackground);
+			else
+				recordSurface.clear(recordSurface.format.RGBToColor(0, 0, 0));
+
+			Graphics::ManagedSurface recordAsset;
+			const Common::Path recordAssetPath = documentationAssetPathFromName(record->assetName);
+			const bool hasRecordAsset = !recordAssetPath.empty() && loadWrappedTgaSurface(recordAssetPath, recordAsset);
+			if (hasRecordAsset)
+				recordSurface.blitFrom(recordAsset);
+
+			const uint32 recordPanelColor = recordSurface.format.RGBToColor(10, 12, 18);
+			const uint32 recordBorderColor = recordSurface.format.RGBToColor(172, 130, 52);
+			const uint32 recordTitleColor = recordSurface.format.RGBToColor(245, 219, 160);
+			const uint32 recordTextColor = recordSurface.format.RGBToColor(242, 235, 218);
+			const uint32 recordHintColor = recordSurface.format.RGBToColor(182, 182, 182);
+			const Common::Rect titlePanel(16, 14, 624, 48);
+			const Common::Rect textPanel(18, 262, 622, 438);
+			const Common::Rect footerPanel(18, 442, 622, 472);
+			recordSurface.fillRect(titlePanel, recordPanelColor);
+			recordSurface.frameRect(titlePanel, recordBorderColor);
+			recordSurface.fillRect(textPanel, recordPanelColor);
+			recordSurface.frameRect(textPanel, recordBorderColor);
+			recordSurface.fillRect(footerPanel, recordPanelColor);
+			recordSurface.frameRect(footerPanel, recordBorderColor);
+
+			const Graphics::Font *recordTitleFont = FontMan.getFontByUsage(Graphics::FontManager::kBigGUIFont);
+			const Graphics::Font *recordBodyFont = FontMan.getFontByUsage(Graphics::FontManager::kGUIFont);
+			if (!recordTitleFont)
+				recordTitleFont = recordBodyFont;
+			if (!recordBodyFont)
+				recordBodyFont = recordTitleFont;
+			if (!recordBodyFont)
+				break;
+
+			drawCenteredLine(recordSurface, recordTitleFont, record->title, 22, recordTitleColor);
+
+			Common::String metaLine = Common::String::format("%s  %d/%d  fiche %d",
+			                                                 kEgyptDocumentationThemeLabels[selectedTheme],
+			                                                 currentRecordIndex + 1, themeRecords.size(),
+			                                                 record->id);
+			recordBodyFont->drawString(&recordSurface, metaLine, 28, 236, 560, recordHintColor);
+
+			Common::Array<Common::String> wrappedLines;
+			recordBodyFont->wordWrapText(record->body, 580, wrappedLines);
+			const int lineHeight = recordBodyFont->getFontHeight() + 1;
+			const int visibleLines = MAX(1, (textPanel.height() - 14) / lineHeight);
+			const int maxScroll = MAX<int>(0, (int)wrappedLines.size() - visibleLines);
+			scrollOffset = CLIP<int>(scrollOffset, 0, maxScroll);
+
+			int drawY = textPanel.top + 8;
+			for (int i = scrollOffset; i < (int)wrappedLines.size() && i < scrollOffset + visibleLines; ++i, drawY += lineHeight)
+				recordBodyFont->drawString(&recordSurface, wrappedLines[i], textPanel.left + 10, drawY, 580, recordTextColor);
+
+			Common::String linksLine = "Liens: aucun";
+			if (!record->links.empty()) {
+				linksLine = "Liens:";
+				for (uint i = 0; i < record->links.size() && i < 4; ++i)
+					linksLine += Common::String::format(" %d", record->links[i]);
+				if (record->links.size() > 4)
+					linksLine += " ...";
+			}
+			recordBodyFont->drawString(&recordSurface, linksLine, 26, 446, 280, recordHintColor);
+			recordBodyFont->drawString(&recordSurface,
+			                     "Gauche/Droite: fiche  Haut/Bas: texte  Echap: sommaire",
+			                     268, 446, 346, recordHintColor, Graphics::kTextAlignRight);
+
+			g_system->copyRectToScreen(recordSurface.getPixels(), recordSurface.pitch, 0, 0, recordSurface.w, recordSurface.h);
+			g_system->updateScreen();
+
+			bool redrawRecord = false;
+			while (!shouldAbort() && !exitDocumentation && !backToSummary && !redrawRecord) {
+				pollEvents();
+				const Common::KeyCode keycode = getNextKey().keycode;
+				if (keycode == Common::KEYCODE_ESCAPE || keycode == Common::KEYCODE_BACKSPACE) {
+					backToSummary = true;
+					break;
+				} else if (keycode == Common::KEYCODE_LEFT) {
+					if (currentRecordIndex > 0) {
+						--currentRecordIndex;
+						scrollOffset = 0;
+					}
+					redrawRecord = true;
+				} else if (keycode == Common::KEYCODE_RIGHT || keycode == Common::KEYCODE_SPACE) {
+					if (currentRecordIndex + 1 < (int)themeRecords.size()) {
+						++currentRecordIndex;
+						scrollOffset = 0;
+					}
+					redrawRecord = true;
+				} else if (keycode == Common::KEYCODE_UP) {
+					if (scrollOffset > 0)
+						--scrollOffset;
+					redrawRecord = true;
+				} else if (keycode == Common::KEYCODE_DOWN) {
+					if (scrollOffset < maxScroll)
+						++scrollOffset;
+					redrawRecord = true;
+				}
+
+				if (getCurrentMouseButton() == 1) {
+					const Common::Point mouse = getMousePos();
+					waitMouseRelease();
+					if (mouse.y >= footerPanel.top) {
+						if (mouse.x < 180 && currentRecordIndex > 0) {
+							--currentRecordIndex;
+							scrollOffset = 0;
+						} else if (mouse.x > 460 && currentRecordIndex + 1 < (int)themeRecords.size()) {
+							++currentRecordIndex;
+							scrollOffset = 0;
+						} else {
+							backToSummary = true;
+						}
+						redrawRecord = true;
+					} else if (mouse.y >= textPanel.top && mouse.y < textPanel.bottom) {
+						if (mouse.x > 320 && scrollOffset < maxScroll)
+							++scrollOffset;
+						else if (scrollOffset > 0)
+							--scrollOffset;
+						redrawRecord = true;
+					}
+				}
+
+				g_system->delayMillis(10);
+			}
+		}
+	}
+
+	clearKeys();
+	waitMouseRelease();
+	showMouse(false);
 }
 
 } // End of namespace Egypt
