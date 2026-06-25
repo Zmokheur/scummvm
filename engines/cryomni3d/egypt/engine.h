@@ -33,6 +33,7 @@
 #include "cryomni3d/egypt/warp.h"
 
 namespace Graphics {
+class ManagedSurface;
 struct Surface;
 }
 
@@ -57,10 +58,31 @@ protected:
 	Common::Error run() override;
 
 private:
+	enum class EgyptStartupMode {
+		kMainMenu,
+		kStory,
+		kVisit,
+		kDocumentation,
+		kQuit
+	};
+
 	void setupSprites();
 	bool loadInterfaceSprites(const Common::Path &filename);
 	bool loadSymbolDefinitions(const Common::Path &filename);
 	bool setInterfaceCursor(uint spriteId) const;
+	EgyptStartupMode showMainMenu();
+	Common::String startStoryModePrototype();
+	Common::String startVisitMode();
+	void startDocumentationModePlaceholder();
+	void playStartupLogoIfPresent();
+	bool loadWrappedTgaSurface(const Common::Path &filename, Graphics::ManagedSurface &surface) const;
+	void drawSimpleScreen(const Common::String &title, const Common::Array<Common::String> &lines,
+	                      int selectedLine = -1, const Graphics::ManagedSurface *background = nullptr) const;
+	void drawMenuScreen(Graphics::ManagedSurface &surface, int hoveredEntry, bool hasBackground) const;
+	bool loadMenuLabels();
+	bool loadMessageLabels();
+	Common::String resolveMessageLabel(const Common::String &messageId) const;
+	Common::String getHoverTextForZone(const EgyptZone *zone) const;
 	Common::Path resolveSceneDefinitionPath(const Common::String &sceneName) const;
 	void loadScene(const Common::String &sceneName);
 	void parseSceneDefinition(const Common::Path &filename, const Common::String &sceneName);
@@ -71,6 +93,7 @@ private:
 	                     double currentAlpha, double currentBeta);
 	bool zoneContainsWarpPoint(const EgyptZone &zone, const Common::Point &warpPoint) const;
 	const EgyptZone *findHoveredActiveZone(const Common::Point &warpPoint) const;
+	const EgyptZone *findInteractiveZone(const Common::Point &warpPoint) const;
 	uint getCursorFrameForZone(const EgyptZone &zone) const;
 	uint getDefaultCursorFrame() const;
 	uint getCursorFrameForHeldObject(int heldObjectId, bool variant) const;
@@ -127,6 +150,10 @@ private:
 	EgyptResolvedCentrage _pendingRuntimeResolved;
 	Common::Array<EgyptCentrage> _currentCentrages;
 	Common::Array<EgyptInterfaceSprite *> _interfaceSprites;
+	Common::Array<Common::String> _menuLabels;
+	bool _menuLabelsLoaded = false;
+	Common::HashMap<Common::String, Common::String, Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo> _messageLabels;
+	bool _messageLabelsLoaded = false;
 	uint _lastHoveredZoneId;
 };
 

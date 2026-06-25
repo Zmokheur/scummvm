@@ -3,6 +3,7 @@ MODULE := engines/cryomni3d
 MODULE_OBJS = \
 	fonts/cryoextfont.o \
 	fonts/cryofont.o \
+	image/cpx5.o \
 	image/hlz.o \
 	image/hnm.o \
 	cryomni3d.o \
@@ -35,6 +36,7 @@ ifdef ENABLE_EGYPT
 MODULE_OBJS += \
 	egypt/cursor.o \
 	egypt/engine.o \
+	egypt/menu.o \
 	egypt/panorama.o \
 	egypt/scene.o \
 	egypt/script.o \

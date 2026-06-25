@@ -69,12 +69,8 @@ bool isEgyptContextName(const Common::String &name) {
 
 bool CryOmni3DEngine_Egypt::handleWarpClick(const Common::Point &mousePos, const Common::Point &warpPoint,
                                             double currentAlpha, double currentBeta) {
-	for (Common::Array<uint>::const_iterator it = _currentScene.activeZones.begin();
-	     it != _currentScene.activeZones.end(); ++it) {
-		const EgyptZone *zone = findZoneById(*it);
-		if (!zone || !zoneContainsWarpPoint(*zone, warpPoint))
-			continue;
-
+	const EgyptZone *zone = findInteractiveZone(warpPoint);
+	if (zone) {
 		const uint zoneClick = resolveScriptZoneClick(*zone);
 		setRuntimeViewAngles(currentAlpha, currentBeta, true);
 
@@ -106,6 +102,22 @@ bool CryOmni3DEngine_Egypt::zoneContainsWarpPoint(const EgyptZone &zone, const C
 }
 
 const EgyptZone *CryOmni3DEngine_Egypt::findHoveredActiveZone(const Common::Point &warpPoint) const {
+	return findInteractiveZone(warpPoint);
+}
+
+const EgyptZone *CryOmni3DEngine_Egypt::findInteractiveZone(const Common::Point &warpPoint) const {
+	if (getScriptVariableValue("FlagVisite") != 0 &&
+	    (_currentScene.contextName.equalsIgnoreCase("JOUR") ||
+	     _currentScene.contextName.equalsIgnoreCase("NUIT"))) {
+		for (Common::Array<EgyptZone>::const_iterator it = _currentScene.zones.begin();
+		     it != _currentScene.zones.end(); ++it) {
+			if ((it->id < 23 || it->id > 28) || !it->commandName.equalsIgnoreCase("ALLER_WARP"))
+				continue;
+			if (zoneContainsWarpPoint(*it, warpPoint))
+				return &(*it);
+		}
+	}
+
 	for (Common::Array<uint>::const_iterator it = _currentScene.activeZones.begin();
 	     it != _currentScene.activeZones.end(); ++it) {
 		const EgyptZone *zone = findZoneById(*it);
@@ -293,6 +305,12 @@ void CryOmni3DEngine_Egypt::logRuntimeWarp(const Common::String &matchedCentrage
 }
 
 uint CryOmni3DEngine_Egypt::resolveScriptZoneClick(const EgyptZone &zone) const {
+	if (getScriptVariableValue("FlagVisite") != 0 &&
+	    (_currentScene.contextName.equalsIgnoreCase("JOUR") ||
+	     _currentScene.contextName.equalsIgnoreCase("NUIT")) &&
+	    zone.id >= 23 && zone.id <= 28)
+		return zone.id - 22;
+
 	if (_currentScene.name.equalsIgnoreCase("S01")) {
 		if (zone.id == 1 && getScriptVariableValue("FlagEntreeS01") == 0)
 			return 1;

@@ -24,7 +24,7 @@
 #include "common/textconsole.h"
 
 #include "cryomni3d/egypt/engine.h"
-#include "cryomni3d/egypt/sprite.h"
+#include "cryomni3d/image/cpx5.h"
 
 #include "graphics/cursorman.h"
 
@@ -37,90 +37,6 @@ static const Graphics::PixelFormat kEgyptSpriteFormat(2, 5, 6, 5, 0, 11, 5, 0, 0
 
 } // End of anonymous namespace
 
-bool decompressCpx5(Common::SeekableReadStream &stream, Common::Array<byte> &output) {
-	if (stream.size() < 12) {
-		warning("Egypt: CPx5 stream too short");
-		return false;
-	}
-
-	char magic[5];
-	magic[0] = (char)stream.readByte();
-	magic[1] = (char)stream.readByte();
-	magic[2] = (char)stream.readByte();
-	magic[3] = (char)stream.readByte();
-	magic[4] = '\0';
-
-	if (strcmp(magic, "CPx5") != 0) {
-		warning("Egypt: unsupported sprite container magic %s", magic);
-		return false;
-	}
-
-	const uint32 compressedSize = stream.readUint32BE();
-	const uint32 decompressedSize = stream.readUint32BE();
-	if (compressedSize != stream.size()) {
-		warning("Egypt: CPx5 size mismatch, header=%u actual=%u", compressedSize, (uint)stream.size());
-	}
-
-	Common::Array<byte> compressedPayload;
-	compressedPayload.resize(stream.size() - 12);
-	if (!compressedPayload.empty())
-		stream.read(compressedPayload.data(), compressedPayload.size());
-
-	output.resize(decompressedSize);
-	uint srcPos = 0;
-	uint dstPos = 0;
-
-	while (dstPos < decompressedSize) {
-		if (srcPos + 4 > compressedPayload.size()) {
-			warning("Egypt: CPx5 truncated while reading flags");
-			return false;
-		}
-
-		const uint32 flags = READ_LE_UINT32(compressedPayload.data() + srcPos);
-		srcPos += 4;
-
-		for (int bit = 31; bit >= 0 && dstPos < decompressedSize; --bit) {
-			if (((flags >> bit) & 1) == 0) {
-				if (srcPos + 2 > compressedPayload.size() || dstPos + 2 > decompressedSize) {
-					warning("Egypt: CPx5 truncated while reading literal");
-					return false;
-				}
-
-				output[dstPos++] = compressedPayload[srcPos++];
-				output[dstPos++] = compressedPayload[srcPos++];
-				continue;
-			}
-
-			if (srcPos + 2 > compressedPayload.size()) {
-				warning("Egypt: CPx5 truncated while reading back-reference");
-				return false;
-			}
-
-			const uint16 word = READ_BE_UINT16(compressedPayload.data() + srcPos);
-			srcPos += 2;
-
-			const uint32 distance = word >> 4;
-			uint32 count = word & 0x0f;
-			if (count == 0)
-				count = 16;
-
-			const uint32 bytesToCopy = count * 2;
-			if (distance == 0 || distance > dstPos || dstPos + bytesToCopy > decompressedSize) {
-				warning("Egypt: invalid CPx5 back-reference distance=%u count=%u dst=%u/%u",
-				        distance, count, dstPos, decompressedSize);
-				return false;
-			}
-
-			for (uint32 i = 0; i < bytesToCopy; ++i) {
-				output[dstPos] = output[dstPos - distance];
-				dstPos++;
-			}
-		}
-	}
-
-	return true;
-}
-
 bool CryOmni3DEngine_Egypt::loadInterfaceSprites(const Common::Path &filename) {
 	Common::File file;
 	if (!file.open(filename)) {
@@ -130,7 +46,7 @@ bool CryOmni3DEngine_Egypt::loadInterfaceSprites(const Common::Path &filename) {
 	}
 
 	Common::Array<byte> decompressed;
-	if (!decompressCpx5(file, decompressed))
+	if (!Image::Cpx5Decoder::decompress(file, decompressed))
 		return false;
 
 	if (decompressed.size() < 4) {

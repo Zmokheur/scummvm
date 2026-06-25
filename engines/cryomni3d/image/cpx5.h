@@ -19,13 +19,22 @@
  *
  */
 
-#ifndef CRYOMNI3D_EGYPT_SPRITE_H
-#define CRYOMNI3D_EGYPT_SPRITE_H
+#ifndef CRYOMNI3D_IMAGE_CPX5_H
+#define CRYOMNI3D_IMAGE_CPX5_H
 
-namespace CryOmni3D {
-namespace Egypt {
+#include "common/array.h"
 
-} // End of namespace Egypt
-} // End of namespace CryOmni3D
+namespace Common {
+class SeekableReadStream;
+}
+
+namespace Image {
+
+class Cpx5Decoder {
+public:
+	static bool decompress(Common::SeekableReadStream &stream, Common::Array<byte> &output);
+};
+
+} // End of namespace Image
 
 #endif

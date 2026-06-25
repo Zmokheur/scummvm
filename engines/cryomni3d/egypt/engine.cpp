@@ -32,16 +32,6 @@
 namespace CryOmni3D {
 namespace Egypt {
 
-namespace {
-
-const bool kEgyptStartupDebugWarpEnabled = true;
-const char *const kEgyptStartupDebugFromScene = "D61";
-const char *const kEgyptStartupDebugToScene = "D07";
-const double kEgyptStartupDebugSourceAlpha = 0.0;
-const double kEgyptStartupDebugSourceBeta = 0.0;
-
-} // End of anonymous namespace
-
 CryOmni3DEngine_Egypt::CryOmni3DEngine_Egypt(OSystem *syst,
 		const CryOmni3DGameDescription *gamedesc) : CryOmni3DEngine(syst, gamedesc),
 		_currentContextName("NUIT"),
@@ -79,29 +69,38 @@ Common::Error CryOmni3DEngine_Egypt::run() {
 	fillSurface(0);
 	syncSoundSettings();
 	loadSymbolDefinitions(Common::Path("REF/FR/EGYPTE.DEF"));
+	loadMessageLabels();
 	setupSprites();
 
-	Common::String sceneName = "S01";
-	if (kEgyptStartupDebugWarpEnabled) {
-		_pendingWarp = EgyptWarpRequest();
-		_pendingWarp.active = true;
-		_pendingWarp.fromScene = kEgyptStartupDebugFromScene;
-		_pendingWarp.toScene = kEgyptStartupDebugToScene;
-		_pendingWarp.zoneCommand = "startup_debug_warp";
-		_pendingWarp.sourceOrientationAvailable = true;
-		_pendingWarp.sourceAlpha = kEgyptStartupDebugSourceAlpha;
-		_pendingWarp.sourceBeta = kEgyptStartupDebugSourceBeta;
-		sceneName = kEgyptStartupDebugToScene;
-		warning("Egypt: startup debug warp enabled fromScene=%s toScene=%s sourceAlpha=%0.3f sourceBeta=%0.3f",
-		        _pendingWarp.fromScene.c_str(), _pendingWarp.toScene.c_str(),
-		        _pendingWarp.sourceAlpha, _pendingWarp.sourceBeta);
-	}
+	playStartupLogoIfPresent();
 
-	while (!shouldAbort() && !sceneName.empty()) {
-		loadScene(sceneName);
-		if (_pendingWarpTarget.empty())
+	while (!shouldAbort()) {
+		EgyptStartupMode nextMode = showMainMenu();
+		if (nextMode == EgyptStartupMode::kQuit)
 			break;
-		sceneName = _pendingWarpTarget;
+
+		Common::String sceneName;
+		switch (nextMode) {
+		case EgyptStartupMode::kStory:
+			sceneName = startStoryModePrototype();
+			break;
+		case EgyptStartupMode::kVisit:
+			sceneName = startVisitMode();
+			break;
+		case EgyptStartupMode::kDocumentation:
+			startDocumentationModePlaceholder();
+			break;
+		case EgyptStartupMode::kMainMenu:
+		case EgyptStartupMode::kQuit:
+			break;
+		}
+
+		while (!shouldAbort() && !sceneName.empty()) {
+			loadScene(sceneName);
+			if (_pendingWarpTarget.empty())
+				break;
+			sceneName = _pendingWarpTarget;
+		}
 	}
 
 	return Common::kNoError;

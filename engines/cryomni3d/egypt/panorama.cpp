@@ -26,6 +26,9 @@
 #include "cryomni3d/egypt/engine.h"
 #include "cryomni3d/image/hnm.h"
 
+#include "graphics/font.h"
+#include "graphics/fontman.h"
+#include "graphics/managed_surface.h"
 #include "graphics/palette.h"
 #include "graphics/surface.h"
 
@@ -366,10 +369,10 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpPreview(const Common::Path &filena
 		return false;
 	}
 
-	// Real warps should land directly in the interactive panorama so the resolved
-	// arrival orientation is visible immediately, without the temporary crop preview.
+	// Story entry scenes, visit hubs, and any runtime warp arrivals should land
+	// directly in the interactive panorama instead of the temporary crop preview.
 	if (_currentScene.name.equalsIgnoreCase("S01") || _currentScene.name.equalsIgnoreCase("S03") ||
-	    _pendingWarp.active)
+	    isEgyptContextName(_currentScene.name) || _pendingWarp.active)
 		return displayCurrentWarpRotation(frame);
 
 	double arrivalAlpha = 0.0;
@@ -411,6 +414,7 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpPreview(const Common::Path &filena
 bool CryOmni3DEngine_Egypt::displayCurrentWarpRotation(const Graphics::Surface *frame) {
 	EgyptWarpRenderer renderer;
 	renderer.init(75. / 180. * M_PI, frame);
+	Graphics::ManagedSurface compositedFrame(640, 480, g_system->getScreenFormat());
 
 	double arrivalAlpha = 0.0;
 	double arrivalBeta = 0.0;
@@ -504,6 +508,7 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpRotation(const Graphics::Surface *
 
 		Common::Point warpPoint = renderer.mapMouseCoords(mouse);
 		const EgyptZone *hoveredZone = findHoveredActiveZone(warpPoint);
+		const Common::String hoverText = getHoverTextForZone(hoveredZone);
 		if (hoveredZone)
 			movingCursor = getCursorFrameForZone(*hoveredZone);
 
@@ -545,16 +550,38 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpRotation(const Graphics::Surface *
 			}
 		}
 
+		auto drawFrame = [&]() {
+			const Graphics::Surface *result = renderer.getSurface();
+			if (!result)
+				return;
+
+			compositedFrame.blitFrom(*result);
+			if (!hoverText.empty()) {
+				const Graphics::Font *font = FontMan.getFontByUsage(Graphics::FontManager::kGUIFont);
+				if (font) {
+					const int textWidth = font->getStringWidth(hoverText);
+					const int textX = CLIP<int>(mouse.x + 18, 8, compositedFrame.w - textWidth - 12);
+					const int textY = CLIP<int>(mouse.y + 14, 8, compositedFrame.h - font->getFontHeight() - 10);
+					const Common::Rect bubble(textX - 6, textY - 3,
+					                          textX + textWidth + 6, textY + font->getFontHeight() + 4);
+					compositedFrame.fillRect(bubble, compositedFrame.format.RGBToColor(20, 18, 14));
+					compositedFrame.frameRect(bubble, compositedFrame.format.RGBToColor(188, 154, 84));
+					font->drawString(&compositedFrame, hoverText, textX, textY,
+					                 compositedFrame.w - textX, compositedFrame.format.RGBToColor(244, 232, 204));
+				}
+			}
+
+			g_system->copyRectToScreen(compositedFrame.getPixels(), compositedFrame.pitch, 0, 0,
+			                           compositedFrame.w, compositedFrame.h);
+			g_system->updateScreen();
+		};
+
 		if (firstDraw || xDelta != 0 || yDelta != 0 || renderer.hasSpeed()) {
 			renderer.updateCoords(xDelta, -yDelta, true);
-			const Graphics::Surface *result = renderer.getSurface();
-			if (result) {
-				g_system->copyRectToScreen(result->getPixels(), result->pitch, 0, 0, result->w, result->h);
-				g_system->updateScreen();
-			}
+			drawFrame();
 			firstDraw = false;
 		} else {
-			g_system->updateScreen();
+			drawFrame();
 		}
 
 		g_system->delayMillis(10);
