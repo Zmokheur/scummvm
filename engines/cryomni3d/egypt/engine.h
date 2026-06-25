@@ -28,6 +28,7 @@
 #include "common/str.h"
 
 #include "cryomni3d/cryomni3d.h"
+#include "graphics/managed_surface.h"
 
 namespace Graphics {
 struct Surface;
@@ -67,10 +68,17 @@ struct EgyptWarpHeader {
 	uint32 firstChunkSize;
 };
 
+struct EgyptInterfaceSprite {
+	Graphics::ManagedSurface surface;
+	Common::Array<byte> mask;
+	int hotspotX;
+	int hotspotY;
+};
+
 class CryOmni3DEngine_Egypt : public CryOmni3DEngine {
 public:
 	CryOmni3DEngine_Egypt(OSystem *syst, const CryOmni3DGameDescription *gamedesc);
-	~CryOmni3DEngine_Egypt() override {}
+	~CryOmni3DEngine_Egypt() override;
 
 	void initializePath(const Common::FSNode &gamePath) override;
 
@@ -85,9 +93,14 @@ protected:
 	Common::Error run() override;
 
 private:
+	void setupSprites();
+	bool loadInterfaceSprites(const Common::Path &filename);
+	bool setInterfaceCursor(uint spriteId) const;
 	void loadScene(const Common::String &sceneName);
 	void parseSceneDefinition(const Common::Path &filename, const Common::String &sceneName);
 	bool inspectWarpHeader(const Common::Path &filename, EgyptWarpHeader &header);
+	bool displayCurrentWarpPreview(const Common::Path &filename);
+	bool displayCurrentWarpRotation(const Graphics::Surface *frame);
 	void parseZoneCommand(EgyptZone &zone);
 	void collectInitialActiveZones();
 	bool runPrototypeWarpScript();
@@ -104,6 +117,7 @@ private:
 	EgyptScene _currentScene;
 	Common::HashMap<Common::String, int> _scriptVariables;
 	Common::String _pendingWarpTarget;
+	Common::Array<EgyptInterfaceSprite *> _interfaceSprites;
 };
 
 } // End of namespace Egypt

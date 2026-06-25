@@ -20,19 +20,370 @@
  */
 
 #include "common/archive.h"
+#include "common/endian.h"
 #include "common/file.h"
+#include "common/system.h"
 #include "common/textconsole.h"
 #include "common/tokenizer.h"
 
 #include "engines/util.h"
 
 #include "cryomni3d/egypt/engine.h"
+#include "cryomni3d/image/hnm.h"
+
+#include "graphics/cursorman.h"
+#include "graphics/palette.h"
+#include "graphics/pixelformat.h"
+#include "graphics/surface.h"
 
 namespace CryOmni3D {
 namespace Egypt {
 
+namespace {
+
+static const Graphics::PixelFormat kEgyptSpriteFormat(2, 5, 6, 5, 0, 11, 5, 0, 0);
+
+enum EgyptCursorFrame {
+	kEgyptCursorNav0 = 0,
+	kEgyptCursorNav1 = 1,
+	kEgyptCursorNav2 = 2,
+	kEgyptCursorNav3 = 3,
+	kEgyptCursorNav4 = 4,
+	kEgyptCursorNav5 = 5,
+	kEgyptCursorNav6 = 6,
+	kEgyptCursorNav7 = 7,
+	kEgyptCursorBusy = 13
+};
+
+bool decompressCpx5(Common::SeekableReadStream &stream, Common::Array<byte> &output) {
+	if (stream.size() < 12) {
+		warning("Egypt: CPx5 stream too short");
+		return false;
+	}
+
+	char magic[5];
+	magic[0] = (char)stream.readByte();
+	magic[1] = (char)stream.readByte();
+	magic[2] = (char)stream.readByte();
+	magic[3] = (char)stream.readByte();
+	magic[4] = '\0';
+
+	if (strcmp(magic, "CPx5") != 0) {
+		warning("Egypt: unsupported sprite container magic %s", magic);
+		return false;
+	}
+
+	const uint32 compressedSize = stream.readUint32BE();
+	const uint32 decompressedSize = stream.readUint32BE();
+	if (compressedSize != stream.size()) {
+		warning("Egypt: CPx5 size mismatch, header=%u actual=%u", compressedSize, (uint)stream.size());
+	}
+
+	Common::Array<byte> compressedPayload;
+	compressedPayload.resize(stream.size() - 12);
+	if (!compressedPayload.empty())
+		stream.read(compressedPayload.data(), compressedPayload.size());
+
+	output.resize(decompressedSize);
+	uint srcPos = 0;
+	uint dstPos = 0;
+
+	while (dstPos < decompressedSize) {
+		if (srcPos + 4 > compressedPayload.size()) {
+			warning("Egypt: CPx5 truncated while reading flags");
+			return false;
+		}
+
+		const uint32 flags = READ_LE_UINT32(compressedPayload.data() + srcPos);
+		srcPos += 4;
+
+		for (int bit = 31; bit >= 0 && dstPos < decompressedSize; --bit) {
+			if (((flags >> bit) & 1) == 0) {
+				if (srcPos + 2 > compressedPayload.size() || dstPos + 2 > decompressedSize) {
+					warning("Egypt: CPx5 truncated while reading literal");
+					return false;
+				}
+
+				output[dstPos++] = compressedPayload[srcPos++];
+				output[dstPos++] = compressedPayload[srcPos++];
+				continue;
+			}
+
+			if (srcPos + 2 > compressedPayload.size()) {
+				warning("Egypt: CPx5 truncated while reading back-reference");
+				return false;
+			}
+
+			const uint16 word = READ_BE_UINT16(compressedPayload.data() + srcPos);
+			srcPos += 2;
+
+			const uint32 distance = word >> 4;
+			uint32 count = word & 0x0f;
+			if (count == 0)
+				count = 16;
+
+			const uint32 bytesToCopy = count * 2;
+			if (distance == 0 || distance > dstPos || dstPos + bytesToCopy > decompressedSize) {
+				warning("Egypt: invalid CPx5 back-reference distance=%u count=%u dst=%u/%u",
+				        distance, count, dstPos, decompressedSize);
+				return false;
+			}
+
+			for (uint32 i = 0; i < bytesToCopy; ++i) {
+				output[dstPos] = output[dstPos - distance];
+				dstPos++;
+			}
+		}
+	}
+
+	return true;
+}
+
+class EgyptPreviewHNMDecoder : public Image::HNMFileDecoder {
+public:
+	EgyptPreviewHNMDecoder(const Graphics::PixelFormat &format) : Image::HNMFileDecoder(format) {}
+
+	const Graphics::Palette &getPalette() const override { return _palette; }
+
+private:
+	Graphics::Palette _palette;
+};
+
+class EgyptWarpRenderer {
+public:
+	EgyptWarpRenderer() : _vfov(0), _alpha(0), _beta(0), _xSpeed(0), _ySpeed(0),
+		_helperValue(0), _dirty(true), _dirtyCoords(true), _sourceSurface(nullptr) {}
+
+	~EgyptWarpRenderer() {
+		_surface.free();
+	}
+
+	void init(double hfov, const Graphics::Surface *sourceSurface) {
+		_sourceSurface = sourceSurface;
+		_alpha = 0.0;
+		_beta = 0.0;
+		_xSpeed = 0.0;
+		_ySpeed = 0.0;
+
+		double oppositeSide = tan(hfov / 2.) / (4. / 3.);
+		double vf = atan2(oppositeSide, 1.);
+		_vfov = (M_PI_2 - vf - (13. / 180. * M_PI)) * 10. / 9.;
+
+		double warpVfov = 155. / 180. * M_PI;
+		double hypV = 768. / 2. / sin(warpVfov / 2.);
+		double oppHTot = tan(hfov / 2.) * 16. / 320.;
+		_helperValue = 2048 * 65536 / (2. * M_PI);
+
+		for (int i = 0; i < 31; i++) {
+			double oppH = (i - 15) * oppHTot;
+			double angle = atan2(oppH, 1.);
+
+			_anglesH[i] = angle;
+			_hypothenusesH[i] = sqrt(oppH * oppH + 1);
+
+			double oppVTot = hypV * _hypothenusesH[i];
+			for (int j = 0; j < 21; j++) {
+				double oppV = (j - 20) * oppHTot;
+
+				_oppositeV[j] = oppV;
+
+				double coord = sqrt(oppV * oppV + _hypothenusesH[i] * _hypothenusesH[i]);
+				coord = oppVTot / coord;
+				coord = coord * 65536;
+
+				_squaresCoords[i][j] = coord;
+			}
+		}
+
+		_surface.create(640, 480, sourceSurface->format);
+		_dirty = true;
+		_dirtyCoords = true;
+	}
+
+	void updateCoords(int xDelta, int yDelta, bool useOldSpeed) {
+		double xDelta1 = xDelta * 0.00025;
+		double yDelta1 = yDelta * 0.0002;
+
+		if (useOldSpeed) {
+			_xSpeed += xDelta1;
+			_ySpeed += yDelta1;
+		} else {
+			_xSpeed = xDelta1;
+			_ySpeed = yDelta1;
+		}
+		_alpha += _xSpeed;
+		_beta += _ySpeed;
+
+		_xSpeed *= 0.4;
+		_ySpeed *= 0.6;
+
+		if (_alpha >= 2. * M_PI) {
+			_alpha -= 2. * M_PI;
+		} else if (_alpha < 0.) {
+			_alpha += 2. * M_PI;
+		}
+
+		if (useOldSpeed) {
+			if (fabs(_xSpeed) < 0.001)
+				_xSpeed = 0.0;
+			if (fabs(_ySpeed) < 0.001)
+				_ySpeed = 0.0;
+		}
+
+		if (_beta > 0.9 * _vfov)
+			_beta = 0.9 * _vfov;
+		else if (_beta < -0.9 * _vfov)
+			_beta = -0.9 * _vfov;
+
+		_dirtyCoords = true;
+		updateImageCoords();
+	}
+
+	bool hasSpeed() const {
+		return _xSpeed != 0. || _ySpeed != 0.;
+	}
+
+	const Graphics::Surface *getSurface() {
+		if (!_sourceSurface)
+			return nullptr;
+
+		if (_dirtyCoords)
+			updateImageCoords();
+
+		if (_dirty)
+			render();
+
+		return &_surface;
+	}
+
+private:
+	void updateImageCoords() {
+		if (!_dirtyCoords)
+			return;
+
+		double tmp = (2048 * 65536) - 2048 * 65536 / (2. * M_PI) * _alpha;
+
+		uint k = 0;
+		for (uint i = 0; i < 31; i++) {
+			double v11 = _anglesH[i] + _beta;
+			double v26 = sin(v11);
+			double v25 = cos(v11) * _hypothenusesH[i];
+
+			uint offset = 80;
+			uint j;
+			for (j = 0; j < 20; j++) {
+				double v16 = atan2(_oppositeV[j], v25);
+				double v17 = v16 * _helperValue;
+				double v18 = (384 * 65536) - _squaresCoords[i][j] * v26;
+
+				k += 2;
+				_imageCoords[k + 0] = (int)(tmp + v17);
+				_imageCoords[k + offset + 0] = (int)(tmp - v17);
+				_imageCoords[k + 1] = (int)v18;
+				_imageCoords[k + offset + 1] = (int)v18;
+
+				offset -= 4;
+			}
+
+			double v19 = atan2(_oppositeV[j], v25);
+
+			k += 2;
+			_imageCoords[k + 0] = (int)((2048. * 65536.) - (_alpha - v19) * _helperValue);
+			_imageCoords[k + 1] = (int)((384. * 65536.) - _squaresCoords[i][j] * v26);
+
+			k += 40;
+		}
+
+		_dirtyCoords = false;
+		_dirty = true;
+	}
+
+	void render() {
+		const int bpp = _sourceSurface->format.bytesPerPixel;
+		if (bpp != 2 && bpp != 4)
+			return;
+
+		uint off = 2;
+		byte *dst = (byte *)_surface.getBasePtr(0, 0);
+		const byte *src = (const byte *)_sourceSurface->getBasePtr(0, 0);
+		const uint dstPitch = _surface.pitch;
+
+		for (uint i = 0; i < 30; i++) {
+			for (uint j = 0; j < 40; j++) {
+				int x1 = (_imageCoords[off + 2] - _imageCoords[off + 0]) >> 4;
+				int y1 = (_imageCoords[off + 3] - _imageCoords[off + 1]) >> 4;
+				int x1_ = (_imageCoords[off + 82 + 2] - _imageCoords[off + 82 + 0]) >> 4;
+				int y1_ = (_imageCoords[off + 82 + 3] - _imageCoords[off + 82 + 1]) >> 4;
+
+				int dx1 = (x1_ - x1) >> 10;
+				int dy1 = (y1_ - y1) >> 15;
+
+				y1 >>= 5;
+
+				int dx2 = (_imageCoords[off + 82 + 0] - _imageCoords[off + 0]) >> 4;
+				int dy2 = (_imageCoords[off + 82 + 1] - _imageCoords[off + 1]) >> 9;
+				int x2 = (((_imageCoords[off + 0] >> 0) * 2) + dx2) >> 1;
+				int y2 = (((_imageCoords[off + 1] >> 5) * 2) + dy2) >> 1;
+
+				for (uint y = 0; y < 16; y++) {
+					uint px = (x2 * 2 + x1) * 16;
+					uint py = (y2 * 2 + y1) / 2;
+					uint deltaX = x1 * 32;
+					uint deltaY = y1;
+					byte *dstLine = dst;
+
+					for (uint x = 0; x < 16; x++) {
+						uint srcOff = (py & 0x1ff800) | (px >> 21);
+						memcpy(dstLine, src + srcOff * bpp, bpp);
+						dstLine += bpp;
+						px += deltaX;
+						py += deltaY;
+					}
+
+					dst += dstPitch;
+					x1 += dx1;
+					y1 += dy1;
+					x2 += dx2;
+					y2 += dy2;
+				}
+				dst -= 16 * dstPitch - 16 * bpp;
+				off += 2;
+			}
+			dst += 15 * dstPitch;
+			off += 2;
+		}
+
+		_dirty = false;
+	}
+
+	double _vfov;
+	double _alpha;
+	double _beta;
+	double _xSpeed;
+	double _ySpeed;
+	int _imageCoords[2544];
+	double _squaresCoords[31][21];
+	double _hypothenusesH[31];
+	double _anglesH[31];
+	double _oppositeV[21];
+	double _helperValue;
+	bool _dirty;
+	bool _dirtyCoords;
+	const Graphics::Surface *_sourceSurface;
+	Graphics::Surface _surface;
+};
+
+} // End of anonymous namespace
+
 CryOmni3DEngine_Egypt::CryOmni3DEngine_Egypt(OSystem *syst,
 		const CryOmni3DGameDescription *gamedesc) : CryOmni3DEngine(syst, gamedesc) {
+}
+
+CryOmni3DEngine_Egypt::~CryOmni3DEngine_Egypt() {
+	for (Common::Array<EgyptInterfaceSprite *>::iterator it = _interfaceSprites.begin();
+	     it != _interfaceSprites.end(); ++it) {
+		delete *it;
+	}
 }
 
 void CryOmni3DEngine_Egypt::initializePath(const Common::FSNode &gamePath) {
@@ -48,14 +399,100 @@ void CryOmni3DEngine_Egypt::initializePath(const Common::FSNode &gamePath) {
 Common::Error CryOmni3DEngine_Egypt::run() {
 	CryOmni3DEngine::run();
 
-	initGraphics(640, 480);
+	const Graphics::PixelFormat egyptFormat = Graphics::PixelFormat::createFormatRGBA32();
+	initGraphics(640, 480, &egyptFormat);
+	warning("Egypt: current screen format uses %d byte(s) per pixel",
+	        g_system->getScreenFormat().bytesPerPixel);
 	fillSurface(0);
 	syncSoundSettings();
+	setupSprites();
 
 	loadScene("S01");
 	executePrototypeSceneLogic();
 
 	return Common::kNoError;
+}
+
+void CryOmni3DEngine_Egypt::setupSprites() {
+	for (Common::Array<EgyptInterfaceSprite *>::iterator it = _interfaceSprites.begin();
+	     it != _interfaceSprites.end(); ++it) {
+		delete *it;
+	}
+	_interfaceSprites.clear();
+
+	if (!loadInterfaceSprites(Common::Path("SPRITE/INTERFAC.SPR"))) {
+		warning("Egypt: failed to load interface sprites from INTERFAC.SPR");
+		return;
+	}
+
+	warning("Egypt: loaded %u interface sprite(s) from INTERFAC.SPR", _interfaceSprites.size());
+	if (!_interfaceSprites.empty())
+		setInterfaceCursor(kEgyptCursorBusy);
+}
+
+bool CryOmni3DEngine_Egypt::loadInterfaceSprites(const Common::Path &filename) {
+	Common::File file;
+	if (!file.open(filename)) {
+		warning("Egypt: failed to open interface sprite file %s",
+		        filename.toString(Common::Path::kNativeSeparator).c_str());
+		return false;
+	}
+
+	Common::Array<byte> decompressed;
+	if (!decompressCpx5(file, decompressed))
+		return false;
+
+	if (decompressed.size() < 4) {
+		warning("Egypt: decompressed interface sprite data is too short");
+		return false;
+	}
+
+	const uint32 firstPixelOffset = READ_LE_UINT32(decompressed.data());
+	if (firstPixelOffset == 0 || (firstPixelOffset % 8) != 0 || firstPixelOffset > decompressed.size()) {
+		warning("Egypt: invalid interface sprite table offset 0x%08x", firstPixelOffset);
+		return false;
+	}
+
+	const uint spriteCount = firstPixelOffset / 8;
+	for (uint i = 0; i < spriteCount; ++i) {
+		const uint entryOffset = i * 8;
+		const uint32 pixelOffset = READ_LE_UINT32(decompressed.data() + entryOffset);
+		const uint16 width = READ_LE_UINT16(decompressed.data() + entryOffset + 4);
+		const uint16 height = READ_LE_UINT16(decompressed.data() + entryOffset + 6);
+		const uint32 pixelDataSize = (uint32)width * (uint32)height * 2;
+
+		if (width == 0 || height == 0 || pixelOffset + pixelDataSize > decompressed.size()) {
+			warning("Egypt: invalid interface sprite %u offset=0x%08x size=%ux%u",
+			        i, pixelOffset, width, height);
+			return false;
+		}
+
+		EgyptInterfaceSprite *sprite = new EgyptInterfaceSprite();
+		sprite->surface.create(width, height, kEgyptSpriteFormat);
+		memcpy(sprite->surface.getPixels(), decompressed.data() + pixelOffset, pixelDataSize);
+
+		sprite->mask.resize(width * height);
+		for (uint pixel = 0; pixel < width * height; ++pixel) {
+			const uint16 color = READ_LE_UINT16(decompressed.data() + pixelOffset + pixel * 2);
+			sprite->mask[pixel] = (color == 0) ? kCursorMaskTransparent : kCursorMaskOpaque;
+		}
+
+		sprite->hotspotX = 0;
+		sprite->hotspotY = 0;
+		_interfaceSprites.push_back(sprite);
+	}
+
+	return true;
+}
+
+bool CryOmni3DEngine_Egypt::setInterfaceCursor(uint spriteId) const {
+	if (spriteId >= _interfaceSprites.size())
+		return false;
+
+	const EgyptInterfaceSprite &sprite = *_interfaceSprites[spriteId];
+	CursorMan.replaceCursor(sprite.surface, sprite.hotspotX, sprite.hotspotY, 0, false,
+	                        sprite.mask.empty() ? nullptr : sprite.mask.data());
+	return true;
 }
 
 void CryOmni3DEngine_Egypt::loadScene(const Common::String &sceneName) {
@@ -76,6 +513,7 @@ void CryOmni3DEngine_Egypt::loadScene(const Common::String &sceneName) {
 	warning("Egypt: scene %s uses warp %s and has %u zone(s)",
 	        _currentScene.name.c_str(), _currentScene.warpName.c_str(), _currentScene.zones.size());
 	collectInitialActiveZones();
+	displayCurrentWarpPreview(warpPath);
 }
 
 void CryOmni3DEngine_Egypt::parseSceneDefinition(const Common::Path &filename, const Common::String &sceneName) {
@@ -169,6 +607,167 @@ bool CryOmni3DEngine_Egypt::inspectWarpHeader(const Common::Path &filename, Egyp
 	chunkTag[2] = '\0';
 	header.firstChunkTag = chunkTag;
 
+	return true;
+}
+
+bool CryOmni3DEngine_Egypt::displayCurrentWarpPreview(const Common::Path &filename) {
+	Common::File file;
+	if (!file.open(filename)) {
+		warning("Egypt: preview failed to open warp %s",
+		        filename.toString(Common::Path::kNativeSeparator).c_str());
+		return false;
+	}
+
+	EgyptPreviewHNMDecoder imageDecoder(g_system->getScreenFormat());
+	if (!imageDecoder.loadStream(file)) {
+		warning("Egypt: preview failed to decode warp %s",
+		        filename.toString(Common::Path::kNativeSeparator).c_str());
+		return false;
+	}
+
+	if (imageDecoder.hasPalette()) {
+		setupPalette(imageDecoder.getPalette().data(), 0, imageDecoder.getPalette().size());
+	}
+
+	const Graphics::Surface *frame = imageDecoder.getSurface();
+	if (!frame) {
+		warning("Egypt: preview got no frame for warp %s",
+		        filename.toString(Common::Path::kNativeSeparator).c_str());
+		return false;
+	}
+
+	if (_currentScene.name.equalsIgnoreCase("S01") || _currentScene.name.equalsIgnoreCase("S03"))
+		return displayCurrentWarpRotation(frame);
+
+	const int frameWidth = static_cast<int>(frame->w);
+	const int frameHeight = static_cast<int>(frame->h);
+	const int drawWidth = MIN(frameWidth, 640);
+	const int drawHeight = MIN(frameHeight, 480);
+	const int srcX = MAX(0, (frameWidth - drawWidth) / 2);
+	const int srcY = MAX(0, (frameHeight - drawHeight) / 2);
+
+	warning("Egypt: preview displays %dx%d crop at %d,%d from %s",
+	        drawWidth, drawHeight, srcX, srcY, _currentScene.warpName.c_str());
+
+	fillSurface(0);
+	g_system->copyRectToScreen(frame->getBasePtr(srcX, srcY), frame->pitch, 0, 0, drawWidth, drawHeight);
+	g_system->updateScreen();
+	g_system->delayMillis(750);
+	return true;
+}
+
+bool CryOmni3DEngine_Egypt::displayCurrentWarpRotation(const Graphics::Surface *frame) {
+	EgyptWarpRenderer renderer;
+	renderer.init(75. / 180. * M_PI, frame);
+
+	const uint availableCursors = _interfaceSprites.size();
+	auto setRotationCursor = [&](uint cursorId) {
+		if (setInterfaceCursor(cursorId))
+			return;
+
+		const uint fallbackCursor = (availableCursors > kEgyptCursorBusy) ? kEgyptCursorBusy : 0;
+		if (availableCursors > 0) {
+			warning("Egypt: cursor %u unavailable, fallback to cursor %u (%u available)",
+			        cursorId, fallbackCursor, availableCursors);
+			setInterfaceCursor(fallbackCursor);
+		}
+	};
+
+	clearKeys();
+	waitMouseRelease();
+	showMouse(true);
+	setRotationCursor(kEgyptCursorBusy);
+
+	warning("Egypt: interactive rotation enabled for %s, click or press space to continue",
+	        _currentScene.name.c_str());
+
+	bool exitRotation = false;
+	bool firstDraw = true;
+	while (!shouldAbort() && !exitRotation) {
+		pollEvents();
+
+		Common::Point mouse = getMousePos();
+		int xDelta = 0;
+		int yDelta = 0;
+		uint movingCursor = kEgyptCursorBusy;
+
+		bool topZone = false;
+		bool bottomZone = false;
+		bool leftZone = false;
+		bool rightZone = false;
+
+		if (mouse.y < 100) {
+			topZone = true;
+			yDelta = 100 - mouse.y;
+		} else if (mouse.y > 380) {
+			bottomZone = true;
+			yDelta = 380 - mouse.y;
+		}
+
+		if (mouse.x < 100) {
+			leftZone = true;
+			xDelta = 100 - mouse.x;
+		} else if (mouse.x > 540) {
+			rightZone = true;
+			xDelta = 540 - mouse.x;
+		}
+
+		if (topZone && !leftZone && !rightZone)
+			movingCursor = kEgyptCursorNav0;
+		else if (topZone && rightZone)
+			movingCursor = kEgyptCursorNav1;
+		else if (rightZone && !topZone && !bottomZone)
+			movingCursor = kEgyptCursorNav2;
+		else if (bottomZone && rightZone)
+			movingCursor = kEgyptCursorNav3;
+		else if (bottomZone && !leftZone && !rightZone)
+			movingCursor = kEgyptCursorNav4;
+		else if (bottomZone && leftZone)
+			movingCursor = kEgyptCursorNav5;
+		else if (leftZone && !topZone && !bottomZone)
+			movingCursor = kEgyptCursorNav6;
+		else if (topZone && leftZone)
+			movingCursor = kEgyptCursorNav7;
+
+		xDelta /= 5;
+		yDelta /= 5;
+
+		Common::KeyState key = getNextKey();
+		if (key.keycode == Common::KEYCODE_SPACE || key.keycode == Common::KEYCODE_RETURN ||
+		    key.keycode == Common::KEYCODE_ESCAPE || getCurrentMouseButton() == 1) {
+			exitRotation = true;
+		}
+
+		if (key.keycode == Common::KEYCODE_LEFT)
+			xDelta -= 6;
+		else if (key.keycode == Common::KEYCODE_RIGHT)
+			xDelta += 6;
+
+		if (key.keycode == Common::KEYCODE_UP)
+			yDelta -= 5;
+		else if (key.keycode == Common::KEYCODE_DOWN)
+			yDelta += 5;
+
+		setRotationCursor(movingCursor);
+
+		if (firstDraw || xDelta != 0 || yDelta != 0 || renderer.hasSpeed()) {
+			renderer.updateCoords(xDelta, -yDelta, true);
+			const Graphics::Surface *result = renderer.getSurface();
+			if (result) {
+				g_system->copyRectToScreen(result->getPixels(), result->pitch, 0, 0, result->w, result->h);
+				g_system->updateScreen();
+			}
+			firstDraw = false;
+		} else {
+			g_system->updateScreen();
+		}
+
+		g_system->delayMillis(10);
+	}
+
+	waitMouseRelease();
+	clearKeys();
+	showMouse(false);
 	return true;
 }
 
