@@ -33,7 +33,13 @@ endif
 
 ifdef ENABLE_EGYPT
 MODULE_OBJS += \
-	egypt/engine.o
+	egypt/cursor.o \
+	egypt/engine.o \
+	egypt/panorama.o \
+	egypt/scene.o \
+	egypt/script.o \
+	egypt/sprite.o \
+	egypt/warp.o
 endif
 
 # This module can be built as a plugin

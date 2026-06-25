@@ -24,11 +24,13 @@
 
 #include "common/array.h"
 #include "common/fs.h"
-#include "common/hashmap.h"
+#include "common/hash-str.h"
 #include "common/str.h"
 
 #include "cryomni3d/cryomni3d.h"
-#include "graphics/managed_surface.h"
+#include "cryomni3d/egypt/cursor.h"
+#include "cryomni3d/egypt/scene.h"
+#include "cryomni3d/egypt/warp.h"
 
 namespace Graphics {
 struct Surface;
@@ -36,45 +38,6 @@ struct Surface;
 
 namespace CryOmni3D {
 namespace Egypt {
-
-struct EgyptZone {
-	uint id;
-	uint left;
-	uint top;
-	uint right;
-	uint bottom;
-	uint actionId;
-	Common::String commandName;
-	Common::String command;
-	Common::String targetWarp;
-};
-
-struct EgyptScene {
-	Common::String name;
-	Common::String warpName;
-	Common::String contextName;
-	Common::Array<EgyptZone> zones;
-	Common::Array<Common::String> scriptLines;
-	Common::Array<uint> activeZones;
-};
-
-struct EgyptWarpHeader {
-	Common::String tag;
-	uint16 width;
-	uint16 height;
-	byte audioFlags;
-	byte bpp;
-	uint32 frameSize;
-	Common::String firstChunkTag;
-	uint32 firstChunkSize;
-};
-
-struct EgyptInterfaceSprite {
-	Graphics::ManagedSurface surface;
-	Common::Array<byte> mask;
-	int hotspotX;
-	int hotspotY;
-};
 
 class CryOmni3DEngine_Egypt : public CryOmni3DEngine {
 public:
@@ -96,33 +59,73 @@ protected:
 private:
 	void setupSprites();
 	bool loadInterfaceSprites(const Common::Path &filename);
+	bool loadSymbolDefinitions(const Common::Path &filename);
 	bool setInterfaceCursor(uint spriteId) const;
+	Common::Path resolveSceneDefinitionPath(const Common::String &sceneName) const;
 	void loadScene(const Common::String &sceneName);
 	void parseSceneDefinition(const Common::Path &filename, const Common::String &sceneName);
 	bool inspectWarpHeader(const Common::Path &filename, EgyptWarpHeader &header);
 	bool displayCurrentWarpPreview(const Common::Path &filename);
 	bool displayCurrentWarpRotation(const Graphics::Surface *frame);
-	bool handleWarpClick(const Common::Point &mousePos, const Common::Point &warpPoint);
+	bool handleWarpClick(const Common::Point &mousePos, const Common::Point &warpPoint,
+	                     double currentAlpha, double currentBeta);
 	bool zoneContainsWarpPoint(const EgyptZone &zone, const Common::Point &warpPoint) const;
 	const EgyptZone *findHoveredActiveZone(const Common::Point &warpPoint) const;
 	uint getCursorFrameForZone(const EgyptZone &zone) const;
+	uint getDefaultCursorFrame() const;
+	uint getCursorFrameForHeldObject(int heldObjectId, bool variant) const;
+	int alphaToPanoramaX(double alpha) const;
+	void rememberPendingArrival(const EgyptZone &zone, uint zoneclic, bool viaHnm, bool sourceOrientationAvailable,
+	                           double alpha, double beta, const char *calledCommand);
+	void clearPendingWarpRequest();
+	void getRuntimeSourceViewAngles(double &alpha, double &beta, bool &available) const;
+	void setRuntimeViewAngles(double alpha, double beta, bool available);
+	const EgyptCentrage *findCentrage(const Common::String &name) const;
+	const EgyptCentrage *findArrivalCentrage(Common::String *matchedName) const;
+	EgyptResolvedCentrage applyCentrageRaw(const EgyptCentrage &centrage,
+	                                       double sourceAlpha, double sourceBeta) const;
+	void prepareRuntimeArrivalView();
+	Common::String resolvePrototypeWarpTarget(const Common::String &targetName) const;
+	int consumeArrivalPanoramaX(double &alpha, double &beta, bool &hasAngles);
 	uint resolveScriptZoneClick(const EgyptZone &zone) const;
 	bool shouldUseDirectWarpFallback(const EgyptZone &zone, uint zoneClick) const;
 	void parseZoneCommand(EgyptZone &zone);
 	void collectInitialActiveZones();
-	bool runPrototypeWarpScript(int zoneClick = 0);
-	bool executeScriptBlock(const Common::Array<Common::String> &lines);
+	bool runPrototypeWarpScript(int zoneClick = 0, double sourceAlpha = 0.0, double sourceBeta = 0.0);
+	bool executeScriptBlock(const Common::Array<Common::String> &lines, uint zoneClick,
+	                        double sourceAlpha, double sourceBeta);
+	bool executeScriptCommand(const Common::String &line, const Common::HashMap<Common::String, uint> &labels,
+	                         uint &pc, uint zoneClick, double sourceAlpha, double sourceBeta,
+	                         bool &producedState);
 	bool evaluateScriptCondition(const Common::String &expression) const;
+	int resolveScriptValue(const Common::String &token) const;
 	int getScriptVariableValue(const Common::String &name) const;
 	void setScriptVariable(const Common::String &assignment);
-	bool queuePrototypeSceneChange(uint zoneId, const char *reason);
+	bool queuePrototypeSceneChange(uint zoneId, const char *reason, uint zoneClick,
+	                               bool viaHnm, double sourceAlpha, double sourceBeta);
 	bool executePrototypeSceneLogic();
 	const EgyptZone *findZoneById(uint zoneId) const;
 	void logScriptLine(const Common::String &line) const;
+	void logUnsupportedScriptCommand(const Common::String &line) const;
+	void logRuntimeWarp(const Common::String &matchedCentrage, const EgyptResolvedCentrage &resolved,
+	                    bool appliedToRenderer) const;
+	void logWarpTrace(const Common::String &matchedName, const EgyptCentrage *matchedCentrage,
+	                  const EgyptResolvedCentrage &resolved) const;
 
 	EgyptScene _currentScene;
-	Common::HashMap<Common::String, int> _scriptVariables;
+	Common::HashMap<Common::String, int, Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo> _scriptVariables;
+	Common::HashMap<Common::String, int, Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo> _scriptConstants;
+	Common::HashMap<Common::String, bool, Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo> _loggedScriptCommands;
 	Common::String _pendingWarpTarget;
+	Common::String _currentContextName;
+	bool _currentViewAnglesAvailable = false;
+	double _currentViewAlpha = 0.0;
+	double _currentViewBeta = 0.0;
+	EgyptWarpRequest _pendingWarp;
+	bool _pendingRuntimeArrivalPrepared = false;
+	Common::String _pendingRuntimeMatchedCentrage;
+	EgyptResolvedCentrage _pendingRuntimeResolved;
+	Common::Array<EgyptCentrage> _currentCentrages;
 	Common::Array<EgyptInterfaceSprite *> _interfaceSprites;
 	uint _lastHoveredZoneId;
 };
