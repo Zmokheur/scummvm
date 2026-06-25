@@ -144,6 +144,30 @@ static void collectDocumentationLeafRecords(const Common::Array<EgyptDocumentati
 		collectDocumentationLeafRecords(records, tree, *child, out);
 }
 
+static int findDocumentationThemeIndexForRecord(const Common::Array<EgyptDocumentationRecord> &records,
+                                                const Common::HashMap<int, Common::Array<int> > &tree,
+                                                int recordId) {
+	for (int themeIndex = 0; themeIndex < kEgyptDocumentationThemeCount; ++themeIndex) {
+		Common::Array<int> themeRecords;
+		collectDocumentationLeafRecords(records, tree, kEgyptDocumentationThemeIds[themeIndex], themeRecords);
+		for (Common::Array<int>::const_iterator it = themeRecords.begin(); it != themeRecords.end(); ++it) {
+			if (*it == recordId)
+				return themeIndex;
+		}
+	}
+
+	return -1;
+}
+
+static int findDocumentationRecordIndex(const Common::Array<int> &recordIds, int recordId) {
+	for (uint i = 0; i < recordIds.size(); ++i) {
+		if (recordIds[i] == recordId)
+			return (int)i;
+	}
+
+	return -1;
+}
+
 bool CryOmni3DEngine_Egypt::loadDocumentationData() {
 	if (_documentationDataLoaded)
 		return true;
@@ -418,23 +442,10 @@ void CryOmni3DEngine_Egypt::startDocumentationMode() {
 	int selectedTheme = 0;
 	bool exitDocumentation = false;
 	while (!shouldAbort() && !exitDocumentation) {
-		Graphics::ManagedSurface summarySurface(640, 480, g_system->getScreenFormat());
-		if (hasSummaryBackground)
-			summarySurface.blitFrom(summaryBackground);
-		else if (hasViewerBackground)
-			summarySurface.blitFrom(viewerBackground);
-		else
-			summarySurface.clear(summarySurface.format.RGBToColor(0, 0, 0));
-
-		const uint32 panelColor = summarySurface.format.RGBToColor(14, 16, 22);
-		const uint32 borderColor = summarySurface.format.RGBToColor(172, 130, 52);
-		const uint32 titleColor = summarySurface.format.RGBToColor(245, 219, 160);
-		const uint32 textColor = summarySurface.format.RGBToColor(242, 235, 218);
-		const uint32 selectedColor = summarySurface.format.RGBToColor(255, 220, 98);
-		const uint32 hintColor = summarySurface.format.RGBToColor(182, 182, 182);
-		const Common::Rect panel(54, 186, 586, 440);
-		summarySurface.fillRect(panel, panelColor);
-		summarySurface.frameRect(panel, borderColor);
+		Common::Rect themeBoxes[kEgyptDocumentationThemeCount];
+		int y = 254;
+		for (int i = 0; i < kEgyptDocumentationThemeCount; ++i, y += 32)
+			themeBoxes[i] = Common::Rect(100, y - 2, 540, y + 22);
 
 		const Graphics::Font *titleFont = FontMan.getFontByUsage(Graphics::FontManager::kBigGUIFont);
 		const Graphics::Font *bodyFont = FontMan.getFontByUsage(Graphics::FontManager::kGUIFont);
@@ -447,43 +458,63 @@ void CryOmni3DEngine_Egypt::startDocumentationMode() {
 			break;
 		}
 
-		drawCenteredLine(summarySurface, titleFont, "Espace documentaire", 206, titleColor);
+		bool openTheme = false;
+		bool redrawSummary = true;
+		while (!shouldAbort() && !exitDocumentation && !openTheme) {
+			if (redrawSummary) {
+				Graphics::ManagedSurface summarySurface(640, 480, g_system->getScreenFormat());
+				if (hasSummaryBackground)
+					summarySurface.blitFrom(summaryBackground);
+				else if (hasViewerBackground)
+					summarySurface.blitFrom(viewerBackground);
+				else
+					summarySurface.clear(summarySurface.format.RGBToColor(0, 0, 0));
 
-		Common::Rect themeBoxes[kEgyptDocumentationThemeCount];
-		int y = 254;
-		for (int i = 0; i < kEgyptDocumentationThemeCount; ++i, y += 32) {
-			themeBoxes[i] = Common::Rect(100, y - 2, 540, y + 22);
-			const uint32 color = i == selectedTheme ? selectedColor : textColor;
-			Common::String line = Common::String::format("[%d] %s", i + 1, kEgyptDocumentationThemeLabels[i]);
-			bodyFont->drawString(&summarySurface, line, 112, y, 400, color);
-		}
+				const uint32 panelColor = summarySurface.format.RGBToColor(14, 16, 22);
+				const uint32 borderColor = summarySurface.format.RGBToColor(172, 130, 52);
+				const uint32 titleColor = summarySurface.format.RGBToColor(245, 219, 160);
+				const uint32 textColor = summarySurface.format.RGBToColor(242, 235, 218);
+				const uint32 selectedColor = summarySurface.format.RGBToColor(255, 220, 98);
+				const uint32 hintColor = summarySurface.format.RGBToColor(182, 182, 182);
+				const Common::Rect panel(54, 186, 586, 440);
+				summarySurface.fillRect(panel, panelColor);
+				summarySurface.frameRect(panel, borderColor);
 
-		drawCenteredLine(summarySurface, bodyFont,
-		                 "Fleches: choisir  Entree: ouvrir  Echap: retour menu",
-		                 408, hintColor);
+				drawCenteredLine(summarySurface, titleFont, "Espace documentaire", 206, titleColor);
 
-		g_system->copyRectToScreen(summarySurface.getPixels(), summarySurface.pitch, 0, 0, summarySurface.w, summarySurface.h);
-		g_system->updateScreen();
+				int drawY = 254;
+				for (int i = 0; i < kEgyptDocumentationThemeCount; ++i, drawY += 32) {
+					const uint32 color = i == selectedTheme ? selectedColor : textColor;
+					Common::String line = Common::String::format("[%d] %s", i + 1, kEgyptDocumentationThemeLabels[i]);
+					bodyFont->drawString(&summarySurface, line, 112, drawY, 400, color);
+				}
 
-		bool themeChosen = false;
-		while (!shouldAbort() && !exitDocumentation && !themeChosen) {
+				drawCenteredLine(summarySurface, bodyFont,
+				                 "Fleches: choisir  Entree: ouvrir  Echap: retour menu",
+				                 408, hintColor);
+
+				g_system->copyRectToScreen(summarySurface.getPixels(), summarySurface.pitch, 0, 0, summarySurface.w, summarySurface.h);
+				g_system->updateScreen();
+				redrawSummary = false;
+			}
+
 			pollEvents();
 			const Common::Point mouse = getMousePos();
 			for (int i = 0; i < kEgyptDocumentationThemeCount; ++i) {
 				if (themeBoxes[i].contains(mouse) && selectedTheme != i) {
 					selectedTheme = i;
-					themeChosen = true;
+					redrawSummary = true;
 					break;
 				}
 			}
-			if (themeChosen)
+			if (redrawSummary)
 				break;
 
 			if (getCurrentMouseButton() == 1) {
 				for (int i = 0; i < kEgyptDocumentationThemeCount; ++i) {
 					if (themeBoxes[i].contains(mouse)) {
 						selectedTheme = i;
-						themeChosen = true;
+						openTheme = true;
 						waitMouseRelease();
 						break;
 					}
@@ -496,22 +527,27 @@ void CryOmni3DEngine_Egypt::startDocumentationMode() {
 				break;
 			} else if (keycode == Common::KEYCODE_UP) {
 				selectedTheme = (selectedTheme + kEgyptDocumentationThemeCount - 1) % kEgyptDocumentationThemeCount;
-				themeChosen = true;
+				redrawSummary = true;
 			} else if (keycode == Common::KEYCODE_DOWN) {
 				selectedTheme = (selectedTheme + 1) % kEgyptDocumentationThemeCount;
-				themeChosen = true;
+				redrawSummary = true;
 			} else if ((keycode >= Common::KEYCODE_1 && keycode <= Common::KEYCODE_5) ||
 			           (keycode >= Common::KEYCODE_KP1 && keycode <= Common::KEYCODE_KP5)) {
 				selectedTheme = keycode >= Common::KEYCODE_KP1 ? keycode - Common::KEYCODE_KP1 : keycode - Common::KEYCODE_1;
-				themeChosen = true;
+				openTheme = true;
 			} else if (keycode == Common::KEYCODE_RETURN || keycode == Common::KEYCODE_SPACE) {
-				themeChosen = true;
+				openTheme = true;
 			}
 
+			g_system->updateScreen();
 			g_system->delayMillis(10);
 		}
 
 		if (exitDocumentation)
+			break;
+		if (redrawSummary)
+			continue;
+		if (!openTheme)
 			break;
 
 		Common::Array<int> themeRecords;
@@ -533,80 +569,131 @@ void CryOmni3DEngine_Egypt::startDocumentationMode() {
 				break;
 			}
 
-			Graphics::ManagedSurface recordSurface(640, 480, g_system->getScreenFormat());
-			if (hasViewerBackground)
-				recordSurface.blitFrom(viewerBackground);
-			else
-				recordSurface.clear(recordSurface.format.RGBToColor(0, 0, 0));
-
-			Graphics::ManagedSurface recordAsset;
-			const Common::Path recordAssetPath = documentationAssetPathFromName(record->assetName);
-			const bool hasRecordAsset = !recordAssetPath.empty() && loadWrappedTgaSurface(recordAssetPath, recordAsset);
-			if (hasRecordAsset)
-				recordSurface.blitFrom(recordAsset);
-
-			const uint32 recordPanelColor = recordSurface.format.RGBToColor(10, 12, 18);
-			const uint32 recordBorderColor = recordSurface.format.RGBToColor(172, 130, 52);
-			const uint32 recordTitleColor = recordSurface.format.RGBToColor(245, 219, 160);
-			const uint32 recordTextColor = recordSurface.format.RGBToColor(242, 235, 218);
-			const uint32 recordHintColor = recordSurface.format.RGBToColor(182, 182, 182);
 			const Common::Rect titlePanel(16, 14, 624, 48);
 			const Common::Rect textPanel(18, 262, 622, 438);
 			const Common::Rect footerPanel(18, 442, 622, 472);
-			recordSurface.fillRect(titlePanel, recordPanelColor);
-			recordSurface.frameRect(titlePanel, recordBorderColor);
-			recordSurface.fillRect(textPanel, recordPanelColor);
-			recordSurface.frameRect(textPanel, recordBorderColor);
-			recordSurface.fillRect(footerPanel, recordPanelColor);
-			recordSurface.frameRect(footerPanel, recordBorderColor);
+			const Common::Rect backButton(26, 446, 166, 468);
+			const Common::Rect prevButton(198, 446, 332, 468);
+			const Common::Rect nextButton(454, 446, 614, 468);
+			Common::Rect linkButtons[4];
+			int visibleLinkCount = 0;
+			int visibleLinkIds[4] = { -1, -1, -1, -1 };
+			Common::Point lastMousePos(-1, -1);
+			bool redrawRecord = true;
+			bool reloadRecord = false;
+			int maxScroll = 0;
+			while (!shouldAbort() && !exitDocumentation && !backToSummary && !reloadRecord) {
+				if (redrawRecord) {
+					Graphics::ManagedSurface recordSurface(640, 480, g_system->getScreenFormat());
+					if (hasViewerBackground)
+						recordSurface.blitFrom(viewerBackground);
+					else
+						recordSurface.clear(recordSurface.format.RGBToColor(0, 0, 0));
 
-			const Graphics::Font *recordTitleFont = FontMan.getFontByUsage(Graphics::FontManager::kBigGUIFont);
-			const Graphics::Font *recordBodyFont = FontMan.getFontByUsage(Graphics::FontManager::kGUIFont);
-			if (!recordTitleFont)
-				recordTitleFont = recordBodyFont;
-			if (!recordBodyFont)
-				recordBodyFont = recordTitleFont;
-			if (!recordBodyFont)
-				break;
+					Graphics::ManagedSurface recordAsset;
+					const Common::Path recordAssetPath = documentationAssetPathFromName(record->assetName);
+					const bool hasRecordAsset = !recordAssetPath.empty() && loadWrappedTgaSurface(recordAssetPath, recordAsset);
+					if (hasRecordAsset)
+						recordSurface.blitFrom(recordAsset);
 
-			drawCenteredLine(recordSurface, recordTitleFont, record->title, 22, recordTitleColor);
+					const uint32 recordPanelColor = recordSurface.format.RGBToColor(10, 12, 18);
+					const uint32 recordBorderColor = recordSurface.format.RGBToColor(172, 130, 52);
+					const uint32 recordTitleColor = recordSurface.format.RGBToColor(245, 219, 160);
+					const uint32 recordTextColor = recordSurface.format.RGBToColor(242, 235, 218);
+					const uint32 recordHintColor = recordSurface.format.RGBToColor(182, 182, 182);
+					const uint32 recordActiveColor = recordSurface.format.RGBToColor(255, 220, 98);
+					const Common::Point mousePos = getMousePos();
+					const bool hoverBack = backButton.contains(mousePos);
+					const bool hoverPrev = prevButton.contains(mousePos);
+					const bool hoverNext = nextButton.contains(mousePos);
+					const bool hoverText = textPanel.contains(mousePos);
 
-			Common::String metaLine = Common::String::format("%s  %d/%d  fiche %d",
-			                                                 kEgyptDocumentationThemeLabels[selectedTheme],
-			                                                 currentRecordIndex + 1, themeRecords.size(),
-			                                                 record->id);
-			recordBodyFont->drawString(&recordSurface, metaLine, 28, 236, 560, recordHintColor);
+					recordSurface.fillRect(titlePanel, recordPanelColor);
+					recordSurface.frameRect(titlePanel, recordBorderColor);
+					recordSurface.fillRect(textPanel, recordPanelColor);
+					recordSurface.frameRect(textPanel, recordBorderColor);
+					recordSurface.fillRect(footerPanel, recordPanelColor);
+					recordSurface.frameRect(footerPanel, recordBorderColor);
+					recordSurface.frameRect(backButton, hoverBack ? recordActiveColor : recordBorderColor);
+					recordSurface.frameRect(prevButton, hoverPrev ? recordActiveColor : recordBorderColor);
+					recordSurface.frameRect(nextButton, hoverNext ? recordActiveColor : recordBorderColor);
 
-			Common::Array<Common::String> wrappedLines;
-			recordBodyFont->wordWrapText(record->body, 580, wrappedLines);
-			const int lineHeight = recordBodyFont->getFontHeight() + 1;
-			const int visibleLines = MAX(1, (textPanel.height() - 14) / lineHeight);
-			const int maxScroll = MAX<int>(0, (int)wrappedLines.size() - visibleLines);
-			scrollOffset = CLIP<int>(scrollOffset, 0, maxScroll);
+					const Graphics::Font *recordTitleFont = FontMan.getFontByUsage(Graphics::FontManager::kBigGUIFont);
+					const Graphics::Font *recordBodyFont = FontMan.getFontByUsage(Graphics::FontManager::kGUIFont);
+					if (!recordTitleFont)
+						recordTitleFont = recordBodyFont;
+					if (!recordBodyFont)
+						recordBodyFont = recordTitleFont;
+					if (!recordBodyFont)
+						break;
 
-			int drawY = textPanel.top + 8;
-			for (int i = scrollOffset; i < (int)wrappedLines.size() && i < scrollOffset + visibleLines; ++i, drawY += lineHeight)
-				recordBodyFont->drawString(&recordSurface, wrappedLines[i], textPanel.left + 10, drawY, 580, recordTextColor);
+					drawCenteredLine(recordSurface, recordTitleFont, record->title, 22, recordTitleColor);
 
-			Common::String linksLine = "Liens: aucun";
-			if (!record->links.empty()) {
-				linksLine = "Liens:";
-				for (uint i = 0; i < record->links.size() && i < 4; ++i)
-					linksLine += Common::String::format(" %d", record->links[i]);
-				if (record->links.size() > 4)
-					linksLine += " ...";
-			}
-			recordBodyFont->drawString(&recordSurface, linksLine, 26, 446, 280, recordHintColor);
-			recordBodyFont->drawString(&recordSurface,
-			                     "Gauche/Droite: fiche  Haut/Bas: texte  Echap: sommaire",
-			                     268, 446, 346, recordHintColor, Graphics::kTextAlignRight);
+					Common::String metaLine = Common::String::format("%s  %d/%d  fiche %d",
+					                                                 kEgyptDocumentationThemeLabels[selectedTheme],
+					                                                 currentRecordIndex + 1, themeRecords.size(),
+					                                                 record->id);
+					recordBodyFont->drawString(&recordSurface, metaLine, 28, 236, 560, recordHintColor);
 
-			g_system->copyRectToScreen(recordSurface.getPixels(), recordSurface.pitch, 0, 0, recordSurface.w, recordSurface.h);
-			g_system->updateScreen();
+					Common::Array<Common::String> wrappedLines;
+					recordBodyFont->wordWrapText(record->body, 580, wrappedLines);
+					const int lineHeight = recordBodyFont->getFontHeight() + 1;
+					const int visibleLines = MAX(1, (textPanel.height() - 14) / lineHeight);
+					maxScroll = MAX<int>(0, (int)wrappedLines.size() - visibleLines);
+					scrollOffset = CLIP<int>(scrollOffset, 0, maxScroll);
 
-			bool redrawRecord = false;
-			while (!shouldAbort() && !exitDocumentation && !backToSummary && !redrawRecord) {
+					int drawY = textPanel.top + 8;
+					for (int i = scrollOffset; i < (int)wrappedLines.size() && i < scrollOffset + visibleLines; ++i, drawY += lineHeight)
+						recordBodyFont->drawString(&recordSurface, wrappedLines[i], textPanel.left + 10, drawY, 580, recordTextColor);
+
+					Common::String linksLine = "Liens: aucun";
+					if (!record->links.empty()) {
+						linksLine = "Liens:";
+						for (uint i = 0; i < record->links.size() && i < 4; ++i)
+							linksLine += Common::String::format(" %d", record->links[i]);
+						if (record->links.size() > 4)
+							linksLine += " ...";
+					}
+					recordBodyFont->drawString(&recordSurface, linksLine, 26, 428, 280, recordHintColor);
+					visibleLinkCount = MIN<int>(4, record->links.size());
+					for (int i = 0; i < visibleLinkCount; ++i) {
+						visibleLinkIds[i] = record->links[i];
+						linkButtons[i] = Common::Rect(208 + i * 82, 424, 280 + i * 82, 440);
+						const bool hoverLink = linkButtons[i].contains(mousePos);
+						recordSurface.frameRect(linkButtons[i], hoverLink ? recordActiveColor : recordBorderColor);
+						recordBodyFont->drawString(&recordSurface, Common::String::format("%d", visibleLinkIds[i]),
+						                           linkButtons[i].left + 4, 427, linkButtons[i].width() - 8,
+						                           hoverLink ? recordActiveColor : recordHintColor,
+						                           Graphics::kTextAlignCenter);
+					}
+					recordBodyFont->drawString(&recordSurface, "Sommaire",
+					                           backButton.left + 8, 450, backButton.width() - 16,
+					                           hoverBack ? recordActiveColor : recordHintColor, Graphics::kTextAlignCenter);
+					recordBodyFont->drawString(&recordSurface, "Precedente",
+					                           prevButton.left + 8, 450, prevButton.width() - 16,
+					                           hoverPrev ? recordActiveColor : recordHintColor, Graphics::kTextAlignCenter);
+					recordBodyFont->drawString(&recordSurface, "Suivante",
+					                           nextButton.left + 8, 450, nextButton.width() - 16,
+					                           hoverNext ? recordActiveColor : recordHintColor, Graphics::kTextAlignCenter);
+					if (hoverText) {
+						recordBodyFont->drawString(&recordSurface,
+						                           "Clic haut/bas dans le texte pour defiler",
+						                           206, 450, 236, recordActiveColor, Graphics::kTextAlignCenter);
+					}
+
+					g_system->copyRectToScreen(recordSurface.getPixels(), recordSurface.pitch, 0, 0, recordSurface.w, recordSurface.h);
+					g_system->updateScreen();
+					lastMousePos = mousePos;
+					redrawRecord = false;
+				}
+
 				pollEvents();
+				const Common::Point currentMousePos = getMousePos();
+				if (currentMousePos != lastMousePos) {
+					redrawRecord = true;
+					continue;
+				}
+
 				const Common::KeyCode keycode = getNextKey().keycode;
 				if (keycode == Common::KEYCODE_ESCAPE || keycode == Common::KEYCODE_BACKSPACE) {
 					backToSummary = true;
@@ -615,14 +702,14 @@ void CryOmni3DEngine_Egypt::startDocumentationMode() {
 					if (currentRecordIndex > 0) {
 						--currentRecordIndex;
 						scrollOffset = 0;
+						reloadRecord = true;
 					}
-					redrawRecord = true;
 				} else if (keycode == Common::KEYCODE_RIGHT || keycode == Common::KEYCODE_SPACE) {
 					if (currentRecordIndex + 1 < (int)themeRecords.size()) {
 						++currentRecordIndex;
 						scrollOffset = 0;
+						reloadRecord = true;
 					}
-					redrawRecord = true;
 				} else if (keycode == Common::KEYCODE_UP) {
 					if (scrollOffset > 0)
 						--scrollOffset;
@@ -636,27 +723,79 @@ void CryOmni3DEngine_Egypt::startDocumentationMode() {
 				if (getCurrentMouseButton() == 1) {
 					const Common::Point mouse = getMousePos();
 					waitMouseRelease();
-					if (mouse.y >= footerPanel.top) {
-						if (mouse.x < 180 && currentRecordIndex > 0) {
+					bool handledClick = false;
+					for (int i = 0; i < visibleLinkCount; ++i) {
+						if (!linkButtons[i].contains(mouse))
+							continue;
+
+						const int linkRecordId = visibleLinkIds[i];
+						const int linkedThemeIndex = findDocumentationThemeIndexForRecord(_documentationRecords, _documentationTree, linkRecordId);
+						if (linkedThemeIndex >= 0) {
+							Common::Array<int> linkedThemeRecords;
+							collectDocumentationLeafRecords(_documentationRecords, _documentationTree,
+							                                kEgyptDocumentationThemeIds[linkedThemeIndex], linkedThemeRecords);
+							const int linkedRecordIndex = findDocumentationRecordIndex(linkedThemeRecords, linkRecordId);
+							if (linkedRecordIndex >= 0) {
+								selectedTheme = linkedThemeIndex;
+								themeRecords = linkedThemeRecords;
+								currentRecordIndex = linkedRecordIndex;
+								scrollOffset = 0;
+								reloadRecord = true;
+								handledClick = true;
+								break;
+							}
+						}
+					}
+
+					if (handledClick) {
+						// Continue inside the current record loop with the new fiche context.
+					} else if (backButton.contains(mouse)) {
+						backToSummary = true;
+						redrawRecord = true;
+					} else if (prevButton.contains(mouse)) {
+						if (currentRecordIndex > 0) {
 							--currentRecordIndex;
 							scrollOffset = 0;
-						} else if (mouse.x > 460 && currentRecordIndex + 1 < (int)themeRecords.size()) {
+							reloadRecord = true;
+						}
+					} else if (nextButton.contains(mouse)) {
+						if (currentRecordIndex + 1 < (int)themeRecords.size()) {
 							++currentRecordIndex;
 							scrollOffset = 0;
+							reloadRecord = true;
+						}
+					} else if (textPanel.contains(mouse)) {
+						if (mouse.y >= textPanel.top + textPanel.height() / 2) {
+							if (scrollOffset < maxScroll)
+								++scrollOffset;
+						} else if (scrollOffset > 0) {
+							--scrollOffset;
+						}
+						redrawRecord = true;
+					} else if (footerPanel.contains(mouse)) {
+						if (mouse.x > footerPanel.left + footerPanel.width() / 2) {
+							if (currentRecordIndex + 1 < (int)themeRecords.size()) {
+								++currentRecordIndex;
+								scrollOffset = 0;
+								reloadRecord = true;
+							}
+						} else if (currentRecordIndex > 0) {
+							--currentRecordIndex;
+							scrollOffset = 0;
+							reloadRecord = true;
 						} else {
 							backToSummary = true;
 						}
-						redrawRecord = true;
-					} else if (mouse.y >= textPanel.top && mouse.y < textPanel.bottom) {
-						if (mouse.x > 320 && scrollOffset < maxScroll)
-							++scrollOffset;
-						else if (scrollOffset > 0)
-							--scrollOffset;
-						redrawRecord = true;
 					}
 				}
 
-				g_system->delayMillis(10);
+				if (reloadRecord)
+					break;
+				if (!backToSummary) {
+					if (redrawRecord)
+						g_system->updateScreen();
+					g_system->delayMillis(10);
+				}
 			}
 		}
 	}
