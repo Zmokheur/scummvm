@@ -114,6 +114,9 @@ Common::Path documentationAssetPathFromName(const Common::String &assetName) {
 	if (assetName.hasPrefixIgnoreCase("PCD"))
 		return Common::Path(Common::String::format("SPRITE/BASEDOC/%s.TGA", assetName.substr(3).c_str()));
 
+	if (assetName.hasPrefixIgnoreCase("CD"))
+		return Common::Path(Common::String::format("SPRITE/BASEDOC/%s.TGA", assetName.substr(2).c_str()));
+
 	return Common::Path();
 }
 
