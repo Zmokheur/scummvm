@@ -562,9 +562,9 @@ void CryOmni3DEngine_Egypt::displayDocumentationById(int docId) {
 	waitMouseRelease();
 
 	// Layout — approximate, to be refined from EXE data
-	const Common::Rect textPanel  ( 12,  60, 300, 388); // body text, left column
-	const Common::Rect imageRect  (308,  60, 628, 335); // record photo, right column
-	const Common::Rect captionRect(308, 340, 628, 388); // photo caption
+	const Common::Rect textPanel  ( 12,  60, 294, 388); // body text, left column
+	const Common::Rect imageRect  (314,  60, 628, 335); // record photo, right column (16px gap after text)
+	const Common::Rect captionRect(314, 340, 628, 388); // photo caption
 	const Common::Rect prevButton ( 90, 432, 124, 462); // ◄
 	const Common::Rect nextButton (130, 432, 164, 462); // ►
 	const Common::Rect backButton (590, 432, 628, 468); // retour
