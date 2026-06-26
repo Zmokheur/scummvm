@@ -269,7 +269,7 @@ bool CryOmni3DEngine_Egypt::displayToolbar(const Graphics::Surface *original) {
 		// (gated only by mode flags and ds:0x4d99d0==0x70 — no FlagVisite check).
 		Common::KeyCode kc;
 		while ((kc = getNextKey().keycode) != Common::KEYCODE_INVALID) {
-			if (kc == Common::KEYCODE_ESCAPE || kc == Common::KEYCODE_F7) {
+			if (kc == Common::KEYCODE_SPACE) {
 				clearKeys();
 				goto dismissToolbar;
 			}
