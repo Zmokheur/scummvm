@@ -252,7 +252,6 @@ bool CryOmni3DEngine_Egypt::displayToolbar(const Graphics::Surface *original) {
 	waitMouseRelease();
 
 	// --- Event loop ---
-	bool mouseWasInsideToolbar = (getMousePos().y >= screenY);
 	int selectedScene   = -1;
 	int lastHoveredSlot = -2; // sentinel to force cursor initialisation
 
@@ -344,14 +343,6 @@ bool CryOmni3DEngine_Egypt::displayToolbar(const Graphics::Surface *original) {
 				else
 					setInterfaceCursor(kEgyptCursorDefault);
 			}
-		}
-
-		// Mouse leaving toolbar → dismiss
-		const Common::Point mouse = getMousePos();
-		if (!mouseWasInsideToolbar) {
-			mouseWasInsideToolbar = (mouse.y >= screenY);
-		} else if (mouse.y < screenY) {
-			break;
 		}
 
 		drawFrame(0);
