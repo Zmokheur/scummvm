@@ -604,6 +604,20 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpRotation(const Graphics::Surface *
 			drawFrame();
 		}
 
+		// Toolbar: triggered when mouse enters the bottom 48px strip (EXE toolbar at y=432 = 480-48)
+		if (!exitRotation && getCurrentMouseButton() == 0 && mouse.y >= 432) {
+			if (displayToolbar(&compositedFrame.rawSurface())) {
+				exitRotation = true;
+			} else {
+				// Toolbar dismissed without navigation — redraw scene to restore the bottom strip
+				firstDraw = true;
+			}
+			waitMouseRelease();
+			clearKeys();
+			setInterfaceCursor(getDefaultCursorFrame());
+			showMouse(true);
+		}
+
 		g_system->delayMillis(10);
 	}
 

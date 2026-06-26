@@ -42,6 +42,7 @@ MODULE_OBJS += \
 	egypt/scene.o \
 	egypt/script.o \
 	egypt/sprite.o \
+	egypt/toolbar.o \
 	egypt/warp.o
 endif
 

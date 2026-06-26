@@ -72,11 +72,11 @@ public:
 
 	void initializePath(const Common::FSNode &gamePath) override;
 
-	bool displayToolbar(const Graphics::Surface *original) override { return false; }
+	bool displayToolbar(const Graphics::Surface *original) override;
 	bool hasPlaceDocumentation() override { return false; }
 	bool displayPlaceDocumentation() override { return false; }
 	uint displayOptions() override { return 0; }
-	void makeTranslucent(Graphics::Surface &dst, const Graphics::Surface &src) const override {}
+	void makeTranslucent(Graphics::Surface &dst, const Graphics::Surface &src) const override;
 	void setupPalette(const byte *colors, uint start, uint num) override {}
 
 protected:

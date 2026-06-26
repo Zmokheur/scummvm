@@ -45,6 +45,9 @@ enum EgyptCursorFrame {
 	kEgyptCursorDefault = 13
 };
 
+static const byte kCursorMaskTransparent = 0;
+static const byte kCursorMaskOpaque      = 1;
+
 struct EgyptInterfaceSprite {
 	Graphics::ManagedSurface surface;
 	Common::Array<byte> mask;
