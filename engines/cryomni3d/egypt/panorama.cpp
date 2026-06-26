@@ -343,7 +343,121 @@ int CryOmni3DEngine_Egypt::alphaToPanoramaX(double alpha) const {
 	return wrapped;
 }
 
+Common::Path CryOmni3DEngine_Egypt::findSceneTgaPath(const Common::String &sceneName) const {
+	const int currentLevel = getScriptVariableValue("Level");
+	if (currentLevel >= 1 && currentLevel <= 6) {
+		Common::Path p(Common::String::format("SPRITE/LEVEL%d/%s.TGA", currentLevel, sceneName.c_str()));
+		if (Common::File::exists(p))
+			return p;
+	}
+	for (int level = 1; level <= 6; ++level) {
+		Common::Path p(Common::String::format("SPRITE/LEVEL%d/%s.TGA", level, sceneName.c_str()));
+		if (Common::File::exists(p))
+			return p;
+	}
+	return Common::Path();
+}
+
+bool CryOmni3DEngine_Egypt::displayCurrentWarpFixed(const Graphics::Surface *frame) {
+	if (!frame)
+		return false;
+
+	double arrivalAlpha = 0.0, arrivalBeta = 0.0;
+	bool hasArrivalAngles = false;
+	consumeArrivalPanoramaX(arrivalAlpha, arrivalBeta, hasArrivalAngles);
+	if (_pendingWarp.active)
+		logRuntimeWarp(_pendingRuntimeMatchedCentrage, _pendingRuntimeResolved, false);
+	clearPendingWarpRequest();
+
+	clearKeys();
+	waitMouseRelease();
+	showMouse(true);
+	setInterfaceCursor(getDefaultCursorFrame());
+
+	warning("Egypt: fixed view active for %s", _currentScene.name.c_str());
+
+	Graphics::ManagedSurface compositedFrame(MIN((int)frame->w, 640), MIN((int)frame->h, 480),
+	                                         g_system->getScreenFormat());
+
+	bool exitView = false;
+	while (!shouldAbort() && !exitView) {
+		pollEvents();
+
+		const Common::Point mouse = getMousePos();
+		// Zone coords for TGA scenes are in screen space — use mouse directly as warp point.
+		const EgyptZone *hoveredZone = findHoveredActiveZone(mouse);
+		setInterfaceCursor(hoveredZone ? getCursorFrameForZone(*hoveredZone) : getDefaultCursorFrame());
+
+		if (getCurrentMouseButton() == 1) {
+			if (handleWarpClick(mouse, mouse, 0.0, 0.0))
+				exitView = true;
+			waitMouseRelease();
+		}
+
+		if (!exitView && getCurrentMouseButton() == 2) {
+			waitMouseRelease();
+			if (displayToolbar(frame)) {
+				exitView = true;
+			} else {
+				clearKeys();
+				setInterfaceCursor(getDefaultCursorFrame());
+				showMouse(true);
+			}
+		}
+
+		const Common::KeyCode kc = getNextKey().keycode;
+		if (kc == Common::KEYCODE_SPACE || kc == Common::KEYCODE_RETURN ||
+		    kc == Common::KEYCODE_ESCAPE)
+			exitView = true;
+
+		compositedFrame.blitFrom(*frame);
+
+		const Common::String hoverText = getHoverTextForZone(hoveredZone);
+		if (!hoverText.empty()) {
+			const Graphics::Font *font = FontMan.getFontByUsage(Graphics::FontManager::kGUIFont);
+			if (font) {
+				const int textWidth = font->getStringWidth(hoverText);
+				const int textX = CLIP<int>(mouse.x + 18, 8, compositedFrame.w - textWidth - 12);
+				const int textY = CLIP<int>(mouse.y + 14, 8, compositedFrame.h - font->getFontHeight() - 10);
+				const Common::Rect bubble(textX - 6, textY - 3,
+				                          textX + textWidth + 6, textY + font->getFontHeight() + 4);
+				compositedFrame.fillRect(bubble, compositedFrame.format.RGBToColor(20, 18, 14));
+				compositedFrame.frameRect(bubble, compositedFrame.format.RGBToColor(188, 154, 84));
+				font->drawString(&compositedFrame, hoverText, textX, textY,
+				                 compositedFrame.w - textX, compositedFrame.format.RGBToColor(244, 232, 204));
+			}
+		}
+
+		g_system->copyRectToScreen(compositedFrame.getPixels(), compositedFrame.pitch,
+		                           0, 0, compositedFrame.w, compositedFrame.h);
+		g_system->updateScreen();
+		g_system->delayMillis(10);
+	}
+
+	waitMouseRelease();
+	clearKeys();
+	showMouse(false);
+	return !_pendingWarpTarget.empty();
+}
+
 bool CryOmni3DEngine_Egypt::displayCurrentWarpPreview(const Common::Path &filename) {
+	// Fixed-view scenes (flagged by IndiceVisuel in their DEF) always use a TGA, never an HNM.
+	if (_currentScene.isFixedView) {
+		const Common::Path tgaPath = findSceneTgaPath(_currentScene.name);
+		if (!tgaPath.empty()) {
+			Graphics::ManagedSurface tgaSurface;
+			if (loadWrappedTgaSurface(tgaPath, tgaSurface)) {
+				warning("Egypt: fixed view for %s using %s",
+				        _currentScene.name.c_str(),
+				        tgaPath.toString(Common::Path::kNativeSeparator).c_str());
+				return displayCurrentWarpFixed(&tgaSurface.rawSurface());
+			}
+		}
+		warning("Egypt: fixed view scene %s has no TGA at expected path",
+		        _currentScene.name.c_str());
+		return false;
+	}
+
 	Common::File file;
 	if (!file.open(filename)) {
 		warning("Egypt: preview failed to open warp %s",

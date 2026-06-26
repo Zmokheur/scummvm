@@ -54,13 +54,6 @@ uint CryOmni3DEngine_Egypt::getCursorFrameForZone(const EgyptZone &zone) const {
 	case 3:
 		return kEgyptCursorLook;
 	case 6:
-		if (zone.command.find('/') == Common::String::npos)
-			return kEgyptCursorDefault;
-		if (getScriptVariableValue("FlagVisite") != 0)
-			return kEgyptCursorVisit;
-		if (_currentScene.contextName.equalsIgnoreCase("JOUR") ||
-		    _currentScene.contextName.equalsIgnoreCase("NUIT"))
-			return kEgyptCursorDefault;
 		return kEgyptCursorVisit;
 	case 7:
 		return kEgyptCursorVisit;

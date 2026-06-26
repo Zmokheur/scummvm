@@ -120,6 +120,8 @@ private:
 	bool inspectWarpHeader(const Common::Path &filename, EgyptWarpHeader &header);
 	bool displayCurrentWarpPreview(const Common::Path &filename);
 	bool displayCurrentWarpRotation(const Graphics::Surface *frame);
+	bool displayCurrentWarpFixed(const Graphics::Surface *frame);
+	Common::Path findSceneTgaPath(const Common::String &sceneName) const;
 	bool handleWarpClick(const Common::Point &mousePos, const Common::Point &warpPoint,
 	                     double currentAlpha, double currentBeta);
 	bool zoneContainsWarpPoint(const EgyptZone &zone, const Common::Point &warpPoint) const;

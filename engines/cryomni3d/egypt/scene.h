@@ -53,6 +53,7 @@ struct EgyptScene {
 	bool hasWarpInit = false;
 	bool hasEndInit = false;
 	bool hasEndWarp = false;
+	bool isFixedView = false;  // TGA fixed-view scene (IndiceVisuel in DEF)
 };
 
 struct EgyptCentrage {

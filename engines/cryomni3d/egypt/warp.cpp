@@ -109,9 +109,11 @@ bool CryOmni3DEngine_Egypt::zoneContainsWarpPoint(const EgyptZone &zone, const C
 const EgyptZone *CryOmni3DEngine_Egypt::findHoveredActiveZone(const Common::Point &warpPoint) const {
 	for (Common::Array<uint>::const_iterator it = _currentScene.activeZones.begin();
 	     it != _currentScene.activeZones.end(); ++it) {
-		const EgyptZone *zone = findZoneById(*it);
-		if (zone && zoneContainsWarpPoint(*zone, warpPoint))
-			return zone;
+		for (Common::Array<EgyptZone>::const_iterator zit = _currentScene.zones.begin();
+		     zit != _currentScene.zones.end(); ++zit) {
+			if (zit->id == *it && zoneContainsWarpPoint(*zit, warpPoint))
+				return &(*zit);
+		}
 	}
 
 	return findInteractiveZone(warpPoint);
@@ -132,9 +134,11 @@ const EgyptZone *CryOmni3DEngine_Egypt::findInteractiveZone(const Common::Point 
 
 	for (Common::Array<uint>::const_iterator it = _currentScene.activeZones.begin();
 	     it != _currentScene.activeZones.end(); ++it) {
-		const EgyptZone *zone = findZoneById(*it);
-		if (zone && zoneContainsWarpPoint(*zone, warpPoint))
-			return zone;
+		for (Common::Array<EgyptZone>::const_iterator zit = _currentScene.zones.begin();
+		     zit != _currentScene.zones.end(); ++zit) {
+			if (zit->id == *it && zoneContainsWarpPoint(*zit, warpPoint))
+				return &(*zit);
+		}
 	}
 
 	return nullptr;

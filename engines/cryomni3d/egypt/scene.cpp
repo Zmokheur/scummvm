@@ -46,6 +46,7 @@ void CryOmni3DEngine_Egypt::parseSceneDefinition(const Common::Path &filename, c
 	_currentScene.hasWarpInit = false;
 	_currentScene.hasEndInit = false;
 	_currentScene.hasEndWarp = false;
+	_currentScene.isFixedView = false;
 	_currentCentrages.clear();
 
 	while (!file.eos()) {
@@ -146,6 +147,20 @@ void CryOmni3DEngine_Egypt::parseSceneDefinition(const Common::Path &filename, c
 			}
 		}
 		logScriptLine(line);
+	}
+
+	// Fixed-view scenes (TGA, no HNM) are identified by a "let IndiceVisuel..." line
+	// in the warpinit block. All such scenes use a 640×480 TGA with screen-space zone coords.
+	for (Common::Array<Common::String>::const_iterator it = _currentScene.scriptLines.begin();
+	     it != _currentScene.scriptLines.end(); ++it) {
+		Common::String lower = *it;
+		lower.toLowercase();
+		if (lower.find("indicevisuel") != Common::String::npos) {
+			_currentScene.isFixedView = true;
+			warning("Egypt: scene %s is a fixed-view TGA scene (IndiceVisuel detected)",
+			        _currentScene.name.c_str());
+			break;
+		}
 	}
 }
 
