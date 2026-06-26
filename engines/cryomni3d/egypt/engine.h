@@ -57,11 +57,18 @@ struct EgyptPendingOverlayPixel {
 	uint16 rgb565;
 };
 
+struct EgyptDocTextRun {
+	Common::String text;
+	int linkIndex; // -1 = normal text, >= 0 = index into EgyptDocumentationRecord::links
+};
+
 struct EgyptDocumentationRecord {
 	int id = -1;
 	Common::String title;
 	Common::String assetName;
+	Common::String assetCaption;
 	Common::String body;
+	Common::Array<EgyptDocTextRun> bodyRuns;
 	Common::Array<int> links;
 };
 
@@ -103,6 +110,7 @@ private:
 	void startDocumentationMode();
 	void playStartupLogoIfPresent();
 	bool loadWrappedTgaSurface(const Common::Path &filename, Graphics::ManagedSurface &surface) const;
+	bool loadWrappedTgaRaw(const Common::Path &filename, Graphics::ManagedSurface &surface) const;
 	void drawSimpleScreen(const Common::String &title, const Common::Array<Common::String> &lines,
 	                      int selectedLine = -1, const Graphics::ManagedSurface *background = nullptr) const;
 	void drawMenuScreen(Graphics::ManagedSurface &surface, int hoveredEntry, bool hasBackground) const;
@@ -113,6 +121,7 @@ private:
 	bool isDocumentationZone(const EgyptZone &zone) const;
 	int resolveDocumentationIdForZone(const EgyptZone &zone, Common::String *source = nullptr) const;
 	void displayZoneDocumentation(const EgyptZone &zone);
+	void displayDocumentationById(int docId);
 	Common::String getHoverTextForZone(const EgyptZone *zone) const;
 	Common::Path resolveSceneDefinitionPath(const Common::String &sceneName) const;
 	void loadScene(const Common::String &sceneName);

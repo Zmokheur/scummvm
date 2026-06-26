@@ -233,6 +233,43 @@ bool CryOmni3DEngine_Egypt::loadWrappedTgaSurface(const Common::Path &filename, 
 	return true;
 }
 
+bool CryOmni3DEngine_Egypt::loadWrappedTgaRaw(const Common::Path &filename, Graphics::ManagedSurface &surface) const {
+	Common::File file;
+	if (!file.open(filename))
+		return false;
+
+	Common::Array<byte> decompressed;
+	byte magic[4] = {0, 0, 0, 0};
+	file.read(magic, sizeof(magic));
+	file.seek(0);
+
+	Image::TGADecoder decoder;
+	bool decoded = false;
+	if (memcmp(magic, "CPx5", sizeof(magic)) == 0) {
+		if (!Image::Cpx5Decoder::decompress(file, decompressed))
+			return false;
+		Common::MemoryReadStream stream(decompressed.data(), decompressed.size(), DisposeAfterUse::NO);
+		decoded = decoder.loadStream(stream);
+	} else {
+		decoded = decoder.loadStream(file);
+	}
+	if (!decoded)
+		return false;
+
+	Graphics::Surface *converted = nullptr;
+	if (decoder.hasPalette())
+		converted = decoder.getSurface()->convertTo(g_system->getScreenFormat(), decoder.getPalette().data(), decoder.getPalette().size());
+	else
+		converted = decoder.getSurface()->convertTo(g_system->getScreenFormat());
+	if (!converted)
+		return false;
+
+	surface.create(converted->w, converted->h, g_system->getScreenFormat());
+	surface.blitFrom(*converted);
+	delete converted;
+	return true;
+}
+
 void CryOmni3DEngine_Egypt::drawSimpleScreen(const Common::String &title, const Common::Array<Common::String> &lines,
                                              int selectedLine, const Graphics::ManagedSurface *background) const {
 	Graphics::ManagedSurface surface(640, 480, g_system->getScreenFormat());
