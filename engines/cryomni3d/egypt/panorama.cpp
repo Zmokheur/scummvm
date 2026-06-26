@@ -401,9 +401,19 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpPreview(const Common::Path &filena
 	warning("Egypt: preview displays %dx%d crop at %d,%d from %s",
 	        drawWidth, drawHeight, srcX, srcY, _currentScene.warpName.c_str());
 
+	Graphics::Surface previewFrame;
+	const Graphics::Surface *displayFrame = frame;
+	if (_hasPendingOverlay) {
+		previewFrame.copyFrom(*frame);
+		applyOverlayToSurface(previewFrame);
+		displayFrame = &previewFrame;
+	}
+
 	fillSurface(0);
-	g_system->copyRectToScreen(frame->getBasePtr(srcX, srcY), frame->pitch, 0, 0, drawWidth, drawHeight);
+	g_system->copyRectToScreen(displayFrame->getBasePtr(srcX, srcY), displayFrame->pitch,
+	                           0, 0, drawWidth, drawHeight);
 	g_system->updateScreen();
+	previewFrame.free();
 	if (_pendingWarp.active)
 		logRuntimeWarp(_pendingRuntimeMatchedCentrage, _pendingRuntimeResolved, hasArrivalAngles);
 	clearPendingWarpRequest();
@@ -412,8 +422,18 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpPreview(const Common::Path &filena
 }
 
 bool CryOmni3DEngine_Egypt::displayCurrentWarpRotation(const Graphics::Surface *frame) {
+	Graphics::Surface overlaidFrame;
+	const Graphics::Surface *sourceFrame = frame;
+	if (_hasPendingOverlay) {
+		overlaidFrame.copyFrom(*frame);
+		applyOverlayToSurface(overlaidFrame);
+		sourceFrame = &overlaidFrame;
+		warning("Egypt: applied %u overlay pixels to warp panorama for %s",
+		        (uint)_pendingOverlayPixels.size(), _currentScene.name.c_str());
+	}
+
 	EgyptWarpRenderer renderer;
-	renderer.init(75. / 180. * M_PI, frame);
+	renderer.init(75. / 180. * M_PI, sourceFrame);
 	Graphics::ManagedSurface compositedFrame(640, 480, g_system->getScreenFormat());
 
 	double arrivalAlpha = 0.0;
@@ -590,6 +610,7 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpRotation(const Graphics::Surface *
 	waitMouseRelease();
 	clearKeys();
 	showMouse(false);
+	overlaidFrame.free();
 	return true;
 }
 

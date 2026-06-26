@@ -232,17 +232,22 @@ Common::String CryOmni3DEngine_Egypt::resolvePrototypeWarpTarget(const Common::S
 
 EgyptResolvedCentrage CryOmni3DEngine_Egypt::applyCentrageRaw(const EgyptCentrage &centrage,
                                                               double sourceAlpha, double sourceBeta) const {
+	// The original EXE initialises α to π/2 before running the DEF script, then centrage rules
+	// modify that default with +/- offsets or replace it with an absolute '=' value.
+	// sourceAlpha (the click angle) is intentionally ignored for + and - operations.
+	const double defaultAlpha = M_PI / 2.0;
+
 	EgyptResolvedCentrage resolved;
 	resolved.matched = true;
-	resolved.rawFinalAlpha = sourceAlpha;
-	resolved.finalBeta = sourceBeta;
+	resolved.rawFinalAlpha = defaultAlpha;
+	resolved.finalBeta = 0.0;
 
 	switch (centrage.op) {
 	case '+':
-		resolved.rawFinalAlpha += centrage.alpha;
+		resolved.rawFinalAlpha = defaultAlpha + centrage.alpha;
 		break;
 	case '-':
-		resolved.rawFinalAlpha -= centrage.alpha;
+		resolved.rawFinalAlpha = defaultAlpha - centrage.alpha;
 		break;
 	case '=':
 		resolved.rawFinalAlpha = centrage.alpha;
@@ -272,16 +277,48 @@ void CryOmni3DEngine_Egypt::prepareRuntimeArrivalView() {
 	_pendingRuntimeArrivalPrepared = true;
 	_pendingRuntimeMatchedCentrage = "none";
 	_pendingRuntimeResolved = EgyptResolvedCentrage();
-	_pendingRuntimeResolved.rawFinalAlpha = _pendingWarp.sourceAlpha;
-	_pendingRuntimeResolved.normalizedFinalAlpha = _pendingWarp.sourceAlpha;
-	_pendingRuntimeResolved.finalBeta = _pendingWarp.sourceBeta;
+
+	// Default: the EXE always starts each panorama at α = π/2. Centrage rules then either
+	// offset from that default (+/-) or replace it with an absolute value (=).
+	const double defaultAlpha = M_PI / 2.0;
+	_pendingRuntimeResolved.matched = true;
+	_pendingRuntimeResolved.rawFinalAlpha = defaultAlpha;
+	_pendingRuntimeResolved.normalizedFinalAlpha = defaultAlpha;
+	_pendingRuntimeResolved.finalBeta = 0.0;
 
 	Common::String matchedName;
 	const EgyptCentrage *centrage = findArrivalCentrage(&matchedName);
-	if (!centrage)
+	if (!centrage) {
+		// No centrage in the destination DEF for this source: try auto-detection.
+		// Scenes that have explicit back-navigation centrage rules (e.g. centrage M15+3.14)
+		// arrive looking opposite to the back-link zone. Level 1 scenes were authored without
+		// such rules, so replicate the same effect here when a back-link zone exists.
+		if (!_pendingWarp.fromScene.empty()) {
+			for (const EgyptZone &z : _currentScene.zones) {
+				if (!z.targetWarp.equalsIgnoreCase(_pendingWarp.fromScene))
+					continue;
+				// Skip invisible trigger zones (0-0-0-0 layout)
+				if (z.left == 0 && z.right == 0 && z.top == 0 && z.bottom == 0)
+					continue;
+				const int centerX = (z.left + z.right) / 2;
+				const double backAlpha = (2048.0 - centerX) * 2.0 * M_PI / 2048.0;
+				double arrivalAlpha = backAlpha + M_PI;
+				while (arrivalAlpha >= 2.0 * M_PI) arrivalAlpha -= 2.0 * M_PI;
+				while (arrivalAlpha < 0.0)            arrivalAlpha += 2.0 * M_PI;
+				_pendingRuntimeMatchedCentrage = Common::String::format("auto_backlink_%s_panoramaX%d",
+				                                                        _pendingWarp.fromScene.c_str(), centerX);
+				_pendingRuntimeResolved.rawFinalAlpha = backAlpha + M_PI;
+				_pendingRuntimeResolved.normalizedFinalAlpha = arrivalAlpha;
+				setRuntimeViewAngles(arrivalAlpha, 0.0, true);
+				return;
+			}
+		}
+		_pendingRuntimeMatchedCentrage = "default_pi_half";
+		setRuntimeViewAngles(defaultAlpha, 0.0, true);
 		return;
+	}
 
-	_pendingRuntimeResolved = applyCentrageRaw(*centrage, _pendingWarp.sourceAlpha, _pendingWarp.sourceBeta);
+	_pendingRuntimeResolved = applyCentrageRaw(*centrage, 0.0, 0.0);
 	if (_pendingRuntimeResolved.matched) {
 		_pendingRuntimeMatchedCentrage = Common::String::format("%s%c%0.3f",
 		                                                       centrage->name.c_str(),

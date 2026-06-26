@@ -19,15 +19,18 @@
  *
  */
 
+#include "common/events.h"
 #include "common/file.h"
 #include "common/system.h"
 #include "common/textconsole.h"
+#include "common/tokenizer.h"
 
 #include "engines/util.h"
 
 #include "cryomni3d/egypt/engine.h"
 
 #include "graphics/pixelformat.h"
+#include "image/codecs/hnm.h"
 
 namespace CryOmni3D {
 namespace Egypt {
@@ -56,6 +59,7 @@ void CryOmni3DEngine_Egypt::initializePath(const Common::FSNode &gamePath) {
 	}
 	SearchMan.addSubDirectoryMatching(gamePath, "ref", 0, 5, false);
 	SearchMan.addSubDirectoryMatching(gamePath, "ref/fr", 0, 5, false);
+	SearchMan.addSubDirectoryMatching(gamePath, "hnm", 0, 5, false);
 	SearchMan.addSubDirectoryMatching(gamePath, "warp", 0, 5, false);
 }
 
@@ -169,6 +173,13 @@ void CryOmni3DEngine_Egypt::loadScene(const Common::String &sceneName) {
 	_pendingRuntimeArrivalPrepared = false;
 	_pendingRuntimeMatchedCentrage.clear();
 	_pendingRuntimeResolved = EgyptResolvedCentrage();
+	_sceneOverlayData.clear();
+	_sceneOverlayCatalog.clear();
+	_pendingOverlayPixels.clear();
+	_hasPendingOverlay = false;
+
+	if (_pendingWarp.viaHnm && !_pendingWarp.hnmName.empty())
+		playHnmTransition(_pendingWarp.hnmName);
 
 	Common::Path scenePath = resolveSceneDefinitionPath(sceneName);
 	parseSceneDefinition(scenePath, sceneName);
@@ -196,6 +207,132 @@ void CryOmni3DEngine_Egypt::loadScene(const Common::String &sceneName) {
 	        _currentScene.name.c_str(), _currentScene.warpName.c_str(), _currentScene.zones.size());
 	collectInitialActiveZones();
 	displayCurrentWarpPreview(warpPath);
+}
+
+void CryOmni3DEngine_Egypt::playHnmTransition(const Common::String &hnmList) {
+	Common::StringTokenizer tok(hnmList, "/");
+	while (!tok.empty()) {
+		Common::String name = tok.nextToken();
+		if (name.empty())
+			continue;
+
+		Common::Path path(Common::String::format("HNM/%s.HNS", name.c_str()));
+		if (!Common::File::exists(path)) {
+			warning("Egypt: HNM transition '%s' not found at %s", name.c_str(),
+			        path.toString(Common::Path::kNativeSeparator).c_str());
+			continue;
+		}
+
+		playHnmFile(path);
+
+		if (shouldAbort())
+			break;
+	}
+}
+
+void CryOmni3DEngine_Egypt::playHnmFile(const Common::Path &path) {
+	Common::File file;
+	if (!file.open(path)) {
+		warning("Egypt: failed to open HNS file %s",
+		        path.toString(Common::Path::kNativeSeparator).c_str());
+		return;
+	}
+
+	// HNM6 header is 64 bytes total
+	if (file.readUint32BE() != MKTAG('H', 'N', 'M', '6')) {
+		warning("Egypt: not an HNM6 file: %s",
+		        path.toString(Common::Path::kNativeSeparator).c_str());
+		return;
+	}
+	file.skip(4);                                   // unknown(2) + audioflag(1) + bpp(1)
+	const uint16 width      = file.readUint16LE();  // offset 8
+	const uint16 height     = file.readUint16LE();  // offset 10
+	file.skip(4);                                   // filesize
+	const uint32 numFrames  = file.readUint32LE();  // offset 16
+	file.skip(6);                                   // unknown(4) + unknown(2)
+	const uint16 speed      = file.readUint16LE();  // offset 26: VBL count per frame
+	const uint32 bufferSize = file.readUint32LE();  // offset 28: max frame buffer size
+	file.skip(32);                                  // header text / copyright → reaches offset 64
+
+	if (width == 0 || height == 0 || numFrames == 0) {
+		warning("Egypt: invalid HNS header in %s",
+		        path.toString(Common::Path::kNativeSeparator).c_str());
+		return;
+	}
+
+	// speed = number of 50Hz VBL ticks per frame; 2 → 40ms/frame (25fps)
+	const uint32 msPerFrame  = (speed > 0) ? (speed * 1000u / 50u) : 40u;
+	const uint32 actualBufSz = (bufferSize >= 24u) ? bufferSize : 65536u;
+
+	warning("Egypt: playing %s: %ux%u %u frames speed=%u (%ums/frame)",
+	        path.toString(Common::Path::kNativeSeparator).c_str(),
+	        width, height, numFrames, speed, msPerFrame);
+
+	Image::HNM6Decoder *codec = Image::createHNM6Decoder(
+	    width, height, g_system->getScreenFormat(), actualBufSz, true);
+
+	fillSurface(0);
+
+	bool abortPlayback = false;
+	for (uint32 i = 0; i < numFrames && !shouldAbort() && !abortPlayback; i++) {
+		if (file.eos())
+			break;
+
+		const int64 frameStart = file.pos();
+		const uint32 frameSize = file.readUint32LE();
+		if (frameSize < 4)
+			break;
+		const int64 frameEnd = frameStart + (int64)frameSize;
+
+		const uint32 frameTimeMs = g_system->getMillis();
+		bool videoDecoded = false;
+
+		// Process inner chunks within this frame (video "IX"/"IW" and audio "AA")
+		while (!file.eos() && file.pos() < frameEnd - 7) {
+			const int64 chunkStart = file.pos();
+			const uint32 chunkSize = file.readUint32LE();
+			const uint16 chunkTag  = file.readUint16BE();
+			file.skip(2);  // padding
+
+			if (chunkSize < 8)
+				break;
+			const int64 chunkEnd = chunkStart + (int64)chunkSize;
+
+			// 'IX' = 0x4958, 'IW' = 0x4957
+			if (!videoDecoded && (chunkTag == 0x4958u || chunkTag == 0x4957u)) {
+				const Graphics::Surface *surface = codec->decodeFrame(file);
+				if (surface && surface->getPixels()) {
+					g_system->copyRectToScreen(surface->getBasePtr(0, 0), surface->pitch,
+					                           0, 0, surface->w, surface->h);
+					g_system->updateScreen();
+				}
+				videoDecoded = true;
+			}
+			// Seek past any remaining chunk bytes (audio "AA" or leftover video data)
+			file.seek(chunkEnd);
+		}
+
+		// Advance to start of next frame
+		file.seek(frameEnd);
+
+		// Frame timing: wait until msPerFrame has elapsed since frame started
+		const uint32 elapsed = g_system->getMillis() - frameTimeMs;
+		if (elapsed < msPerFrame)
+			g_system->delayMillis(msPerFrame - elapsed);
+
+		// Allow user to skip with any key or mouse button
+		Common::Event event;
+		while (g_system->getEventManager()->pollEvent(event)) {
+			if (event.type == Common::EVENT_KEYDOWN ||
+			    event.type == Common::EVENT_LBUTTONDOWN ||
+			    event.type == Common::EVENT_RBUTTONDOWN) {
+				abortPlayback = true;
+				break;
+			}
+		}
+	}
+
+	delete codec;
 }
 
 } // End of namespace Egypt

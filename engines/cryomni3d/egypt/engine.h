@@ -45,6 +45,18 @@ struct EgyptMessageEntry {
 	int documentationId = -1;
 };
 
+struct EgyptOverlayCatalogEntry {
+	uint32 base;
+	uint32 count;
+	uint32 counter;
+};
+
+struct EgyptPendingOverlayPixel {
+	uint16 x;
+	uint16 y;
+	uint16 rgb565;
+};
+
 struct EgyptDocumentationRecord {
 	int id = -1;
 	Common::String title;
@@ -81,6 +93,8 @@ private:
 
 	void setupSprites();
 	bool loadInterfaceSprites(const Common::Path &filename);
+	void playHnmTransition(const Common::String &hnmList);
+	void playHnmFile(const Common::Path &path);
 	bool loadSymbolDefinitions(const Common::Path &filename);
 	bool setInterfaceCursor(uint spriteId) const;
 	EgyptStartupMode showMainMenu();
@@ -151,6 +165,9 @@ private:
 	                    bool appliedToRenderer) const;
 	void logWarpTrace(const Common::String &matchedName, const EgyptCentrage *matchedCentrage,
 	                  const EgyptResolvedCentrage &resolved) const;
+	bool loadSceneOverlay(const Common::String &sceneName);
+	void decodeOverlayFrame(uint frameIndex);
+	void applyOverlayToSurface(Graphics::Surface &surface) const;
 
 	EgyptScene _currentScene;
 	Common::HashMap<Common::String, int, Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo> _scriptVariables;
@@ -167,6 +184,10 @@ private:
 	EgyptResolvedCentrage _pendingRuntimeResolved;
 	Common::Array<EgyptCentrage> _currentCentrages;
 	Common::Array<EgyptInterfaceSprite *> _interfaceSprites;
+	Common::Array<byte> _sceneOverlayData;
+	Common::Array<EgyptOverlayCatalogEntry> _sceneOverlayCatalog;
+	Common::Array<EgyptPendingOverlayPixel> _pendingOverlayPixels;
+	bool _hasPendingOverlay = false;
 	Common::Array<Common::String> _menuLabels;
 	bool _menuLabelsLoaded = false;
 	Common::HashMap<Common::String, EgyptMessageEntry, Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo> _messageLabels;
