@@ -23,6 +23,7 @@
 #include "common/system.h"
 #include "common/textconsole.h"
 #include "common/tokenizer.h"
+#include "graphics/surface.h"
 
 #include "cryomni3d/egypt/engine.h"
 
@@ -239,11 +240,139 @@ void CryOmni3DEngine_Egypt::runSceneStartup() {
 	        _currentScene.name.c_str(), activeList.c_str());
 }
 
+// ── Screen fade ───────────────────────────────────────────────────────────────
+
+// Animates a fade between the current screen and black.
+// toBlack=true : fade current → black (FADE_OUT), ~350 ms.
+// toBlack=false: capture current, fill black, fade back → current (FADE_IN).
+// 18 steps × 20 ms matches the original EXE blend loop (0x417910 / 0x417d70).
+void CryOmni3DEngine_Egypt::performScreenFade(bool toBlack) {
+	static const uint kSteps  = 18;
+	static const uint kStepMs = 20;
+
+	Graphics::Surface snapshot;
+	{
+		Graphics::Surface *screen = g_system->lockScreen();
+		if (!screen) {
+			if (toBlack) fillSurface(0);
+			return;
+		}
+		snapshot.copyFrom(*screen);
+		g_system->unlockScreen();
+	}
+
+	if (snapshot.format.bytesPerPixel != 4) {
+		warning("Egypt: performScreenFade: unexpected format bpp=%u, skipping blend",
+		        snapshot.format.bytesPerPixel);
+		snapshot.free();
+		if (toBlack) fillSurface(0);
+		return;
+	}
+
+	if (!toBlack) {
+		g_system->fillScreen(0);
+		g_system->updateScreen();
+	}
+
+	Graphics::Surface blended;
+	blended.create(snapshot.w, snapshot.h, snapshot.format);
+	const Graphics::PixelFormat &fmt = snapshot.format;
+
+	for (uint step = 0; step < kSteps; ++step) {
+		const uint factor = toBlack ? (kSteps - step) * 255 / kSteps
+		                            : (step + 1)      * 255 / kSteps;
+
+		for (int y = 0; y < snapshot.h; ++y) {
+			const uint32 *srcRow = (const uint32 *)snapshot.getBasePtr(0, y);
+			uint32 *dstRow       = (uint32 *)blended.getBasePtr(0, y);
+			for (int x = 0; x < snapshot.w; ++x) {
+				uint8 r, g, b;
+				fmt.colorToRGB(srcRow[x], r, g, b);
+				r = (uint8)((uint)r * factor / 255);
+				g = (uint8)((uint)g * factor / 255);
+				b = (uint8)((uint)b * factor / 255);
+				dstRow[x] = fmt.RGBToColor(r, g, b);
+			}
+		}
+
+		g_system->copyRectToScreen(blended.getPixels(), blended.pitch,
+		                           0, 0, snapshot.w, snapshot.h);
+		g_system->updateScreen();
+		g_system->delayMillis(kStepMs);
+	}
+
+	snapshot.free();
+	blended.free();
+
+	if (toBlack) fillSurface(0);
+}
+
+// ── Scene crossfade ───────────────────────────────────────────────────────────
+
+// Blends oldScreen → newScreen over ~480 ms, matching the EXE routine at 0x418220.
+// counter += 0x10 per step; factor = min(counter, 0x100); step every 30 ms.
+// Formula per channel: out = srcA - ((srcA - srcB) * factor >> 8)  (lerp old→new).
+// 16 visible blend steps (0x10..0x100) then 3 hold steps (0x110..0x130) → ~570 ms total.
+void CryOmni3DEngine_Egypt::performCrossFade(const Graphics::Surface *newScreen) {
+	static const int kStepMs  = 30;
+	static const int kStep    = 0x10;
+	static const int kFull    = 0x100;
+	static const int kEnd     = 0x130;
+
+	if (!_hasCrossFadeOldScreen || !newScreen) {
+		_hasCrossFadeOldScreen = false;
+		return;
+	}
+
+	const Graphics::Surface &oldS = _crossFadeOldScreen;
+	if (oldS.format.bytesPerPixel != 4 || newScreen->format.bytesPerPixel != 4) {
+		warning("Egypt: performCrossFade: unexpected bpp (old=%u new=%u), skipping",
+		        oldS.format.bytesPerPixel, newScreen->format.bytesPerPixel);
+		_hasCrossFadeOldScreen = false;
+		_crossFadeOldScreen.free();
+		return;
+	}
+
+	const int w = MIN(MIN((int)oldS.w, (int)newScreen->w), 640);
+	const int h = MIN(MIN((int)oldS.h, (int)newScreen->h), 480);
+	const Graphics::PixelFormat &fmt = oldS.format;
+
+	Graphics::Surface blended;
+	blended.create(w, h, fmt);
+
+	for (int counter = kStep; counter <= kEnd && !shouldAbort(); counter += kStep) {
+		const int factor = MIN(counter, kFull);
+
+		for (int y = 0; y < h; ++y) {
+			const uint32 *srcA = (const uint32 *)oldS.getBasePtr(0, y);
+			const uint32 *srcB = (const uint32 *)newScreen->getBasePtr(0, y);
+			uint32 *dst        = (uint32 *)blended.getBasePtr(0, y);
+			for (int x = 0; x < w; ++x) {
+				uint8 ar, ag, ab, br, bg, bb;
+				fmt.colorToRGB(srcA[x], ar, ag, ab);
+				fmt.colorToRGB(srcB[x], br, bg, bb);
+				const uint8 r = (uint8)((int)ar - (((int)ar - (int)br) * factor >> 8));
+				const uint8 g = (uint8)((int)ag - (((int)ag - (int)bg) * factor >> 8));
+				const uint8 b = (uint8)((int)ab - (((int)ab - (int)bb) * factor >> 8));
+				dst[x] = fmt.RGBToColor(r, g, b);
+			}
+		}
+
+		g_system->copyRectToScreen(blended.getPixels(), blended.pitch, 0, 0, w, h);
+		g_system->updateScreen();
+		g_system->delayMillis(kStepMs);
+	}
+
+	blended.free();
+	_crossFadeOldScreen.free();
+	_hasCrossFadeOldScreen = false;
+}
+
 // ── HNM sequence player ───────────────────────────────────────────────────────
 
 // Plays an ordered, slash-joined list of HNM tokens.
-// FADE_OUT is handled as an engine effect (black frame); other tokens are
-// resolved as HNM/<token>.HNS with HNM/FR/<token>.HNS as fallback.
+// FADE_OUT / FADE_IN are internal blend effects; other tokens are resolved as
+// HNM/<token>.HNS with HNM/FR/<token>.HNS as fallback.
 void CryOmni3DEngine_Egypt::executeHnmSequence(const Common::String &hnmJoined) {
 	if (hnmJoined.empty())
 		return;
@@ -258,9 +387,12 @@ void CryOmni3DEngine_Egypt::executeHnmSequence(const Common::String &hnmJoined) 
 			continue;
 
 		if (token.equalsIgnoreCase("FADE_OUT")) {
-			fillSurface(0);
-			g_system->updateScreen();
-			g_system->delayMillis(200);
+			performScreenFade(true);
+			continue;
+		}
+
+		if (token.equalsIgnoreCase("FADE_IN")) {
+			performScreenFade(false);
 			continue;
 		}
 

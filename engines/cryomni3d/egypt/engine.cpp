@@ -47,6 +47,7 @@ CryOmni3DEngine_Egypt::~CryOmni3DEngine_Egypt() {
 	     it != _interfaceSprites.end(); ++it) {
 		delete *it;
 	}
+	_crossFadeOldScreen.free();
 }
 
 void CryOmni3DEngine_Egypt::initializePath(const Common::FSNode &gamePath) {
@@ -232,6 +233,18 @@ void CryOmni3DEngine_Egypt::loadScene(const Common::String &sceneName) {
 	_currentSceneAssets = detectSceneAssets(sceneName, getScriptVariableValue("Level"));
 	resetScriptTimer();
 	runSceneStartup();
+
+	_hasCrossFadeOldScreen = false;
+	if (_pendingWarp.active) {
+		Graphics::Surface *screen = g_system->lockScreen();
+		if (screen) {
+			_crossFadeOldScreen.free();
+			_crossFadeOldScreen.copyFrom(*screen);
+			_hasCrossFadeOldScreen = true;
+			g_system->unlockScreen();
+		}
+	}
+
 	displayCurrentWarpPreview(warpPath);
 }
 

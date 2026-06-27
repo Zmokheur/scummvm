@@ -27,6 +27,8 @@
 #include "common/hash-str.h"
 #include "common/str.h"
 
+#include "graphics/surface.h"
+
 #include "cryomni3d/cryomni3d.h"
 #include "cryomni3d/egypt/cursor.h"
 #include "cryomni3d/egypt/scene.h"
@@ -34,7 +36,6 @@
 
 namespace Graphics {
 class ManagedSurface;
-struct Surface;
 }
 
 namespace CryOmni3D {
@@ -194,6 +195,8 @@ private:
 	void runEndInit(int zoneclic);
 	void autoActivateZoneclicZones();
 	void runSceneStartup();
+	void performScreenFade(bool toBlack);
+	void performCrossFade(const Graphics::Surface *newScreen);
 	void executeHnmSequence(const Common::String &hnmJoined);
 	void resetScriptTimer();
 	void updateScriptTimer();
@@ -228,6 +231,8 @@ private:
 	Common::Array<EgyptSceneAsset> _currentSceneAssets;
 	uint32 _scriptTimerStartMs = 0;
 	bool   _sceneHasTimerScript = false;
+	Graphics::Surface _crossFadeOldScreen;
+	bool _hasCrossFadeOldScreen = false;
 };
 
 } // End of namespace Egypt

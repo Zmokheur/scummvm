@@ -352,6 +352,9 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpFixed(const Graphics::Surface *fra
 	Graphics::ManagedSurface compositedFrame(MIN((int)frame->w, 640), MIN((int)frame->h, 480),
 	                                         g_system->getScreenFormat());
 
+	compositedFrame.blitFrom(*frame);
+	performCrossFade(&compositedFrame.rawSurface());
+
 	bool exitView = false;
 	while (!shouldAbort() && !exitView) {
 		if (_sceneHasTimerScript) {
@@ -542,6 +545,14 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpRotation(const Graphics::Surface *
 
 	warning("Egypt: interactive rotation enabled for %s, click or press space to continue",
 	        _currentScene.name.c_str());
+
+	{
+		const Graphics::Surface *firstFrame = renderer.getSurface();
+		if (firstFrame) {
+			compositedFrame.blitFrom(*firstFrame);
+			performCrossFade(&compositedFrame.rawSurface());
+		}
+	}
 
 	bool exitRotation = false;
 	bool firstDraw    = true;

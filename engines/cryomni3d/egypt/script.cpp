@@ -253,9 +253,24 @@ bool CryOmni3DEngine_Egypt::executeScriptCommand(const Common::String &rawLine,
 		return true;
 	}
 
+	if (line.hasPrefixIgnoreCase("fonction ")) {
+		Common::String numStr = line.substr(9);
+		numStr.trim();
+		const int funcNum = atoi(numStr.c_str());
+		// FADE_IN = 6, FADE_OUT = 7 (constants defined in EGYPTE.DEF)
+		if (funcNum == 6) {
+			performScreenFade(false);
+		} else if (funcNum == 7) {
+			performScreenFade(true);
+		} else {
+			logUnsupportedScriptCommand(line);
+		}
+		return true;
+	}
+
 	static const char *const kSafeNoopPrefixes[] = {
 		"music", "stopmusic", "sound", "sounds", "bmouse", "dialoguer",
-		"show", "hide", "son_3d", "fonction", "inventaire", "and"
+		"show", "hide", "son_3d", "inventaire", "and"
 	};
 	for (uint i = 0; i < ARRAYSIZE(kSafeNoopPrefixes); ++i) {
 		if (line.hasPrefixIgnoreCase(kSafeNoopPrefixes[i])) {
