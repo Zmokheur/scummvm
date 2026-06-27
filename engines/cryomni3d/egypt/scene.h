@@ -23,17 +23,45 @@
 #define CRYOMNI3D_EGYPT_SCENE_H
 
 #include "common/array.h"
+#include "common/path.h"
 #include "common/str.h"
 
 namespace CryOmni3D {
 namespace Egypt {
 
-struct EgyptZone {
-	uint id = 0;
-	uint left = 0;
-	uint top = 0;
-	uint right = 0;
+// ── Asset types ───────────────────────────────────────────────────────────────
+
+enum EgyptAssetKind {
+	kAssetWarpHNM,   // WARP/<scene>_24.HNM       — panorama 360°
+	kAssetBackTGA,   // SPRITE/LEVELx/<scene>.TGA  — fond fixe (CPx5)
+	kAssetSceneSPR,  // SPRITE/LEVELx/<scene>.SPR  — sprites de scène
+	kAssetCharSPRA,  // SPRITE/LEVELx/<scene>A.SPR — sprite personnage part A
+	kAssetCharSPRB   // SPRITE/LEVELx/<scene>B.SPR — sprite personnage part B
+};
+
+struct EgyptSceneAsset {
+	EgyptAssetKind kind    = kAssetWarpHNM;
+	Common::Path   path;
+	bool           present = false;
+};
+
+// ── Zone structures ───────────────────────────────────────────────────────────
+
+// Extra rect for zones that appear several times with different rects (same id)
+struct EgyptZoneRect {
+	uint left   = 0;
+	uint top    = 0;
+	uint right  = 0;
 	uint bottom = 0;
+};
+
+struct EgyptZone {
+	uint id     = 0;
+	uint left   = 0;
+	uint top    = 0;
+	uint right  = 0;
+	uint bottom = 0;
+	Common::Array<EgyptZoneRect>   extraRects;    // duplicate zone defs (same id, different rect)
 	uint actionId = 0;
 	Common::String commandName;
 	Common::String command;
@@ -41,36 +69,38 @@ struct EgyptZone {
 	Common::String label;
 	Common::String extraParam;
 	Common::String targetWarp;
+	Common::Array<Common::String>  hnmSequence;   // ordered HNM tokens for ALLER_HNM_WARP
 };
+
+// ── Scene structures ──────────────────────────────────────────────────────────
 
 struct EgyptScene {
 	Common::String name;
 	Common::String warpName;
 	Common::String contextName;
-	Common::Array<EgyptZone> zones;
-	Common::Array<Common::String> scriptLines;
-	Common::Array<uint> activeZones;
+	Common::Array<EgyptZone>         zones;
+	Common::Array<Common::String>    scriptLines;
+	Common::Array<uint>              activeZones;
 	bool hasWarpInit = false;
-	bool hasEndInit = false;
-	bool hasEndWarp = false;
-	bool isFixedView = false;  // TGA fixed-view scene (IndiceVisuel in DEF)
+	bool hasEndInit  = false;
+	bool hasEndWarp  = false;
 };
 
 struct EgyptCentrage {
 	Common::String name;
-	char op = '\0';
-	double alpha = 0.0;
-	bool hasBeta = false;
-	double beta = 0.0;
+	char   op      = '\0';
+	double alpha   = 0.0;
+	bool   hasBeta = false;
+	double beta    = 0.0;
 };
 
 struct EgyptWarpHeader {
 	Common::String tag;
-	uint16 width = 0;
-	uint16 height = 0;
-	byte audioFlags = 0;
-	byte bpp = 0;
-	uint32 frameSize = 0;
+	uint16 width          = 0;
+	uint16 height         = 0;
+	byte   audioFlags     = 0;
+	byte   bpp            = 0;
+	uint32 frameSize      = 0;
 	Common::String firstChunkTag;
 	uint32 firstChunkSize = 0;
 };

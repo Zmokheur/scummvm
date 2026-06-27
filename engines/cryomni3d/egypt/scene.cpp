@@ -46,7 +46,6 @@ void CryOmni3DEngine_Egypt::parseSceneDefinition(const Common::Path &filename, c
 	_currentScene.hasWarpInit = false;
 	_currentScene.hasEndInit = false;
 	_currentScene.hasEndWarp = false;
-	_currentScene.isFixedView = false;
 	_currentCentrages.clear();
 
 	while (!file.eos()) {
@@ -66,22 +65,43 @@ void CryOmni3DEngine_Egypt::parseSceneDefinition(const Common::Path &filename, c
 
 		if (sscanf(line.c_str(), "Zone-%u %u-%u-%u-%u %u:%511[^\r\n]",
 		           &zoneId, &rawTop, &rawLeft, &rawHeight, &rawWidth, &actionId, commandBuffer) == 7) {
-			EgyptZone zone;
-			zone.id = zoneId;
-			zone.left = rawLeft;
-			zone.top = rawTop;
-			zone.right = rawLeft + rawWidth;
-			zone.bottom = rawTop + rawHeight;
-			zone.actionId = actionId;
-			zone.command = Common::String(commandBuffer);
-			zone.command.trim();
-			parseZoneCommand(zone);
-			_currentScene.zones.push_back(zone);
+			// Check for duplicate zone id (same id, different rect — e.g. Zone-001 in S00.DEF)
+			EgyptZone *existing = nullptr;
+			for (uint zi = 0; zi < _currentScene.zones.size(); ++zi) {
+				if (_currentScene.zones[zi].id == zoneId) {
+					existing = &_currentScene.zones[zi];
+					break;
+				}
+			}
 
-			warning("Egypt: zone %03u rect=(%u,%u %ux%u) action=%u command=%s param=%s label=%s extra=%s target=%s",
-			        zone.id, zone.left, zone.top, rawWidth, rawHeight,
-			        zone.actionId, zone.command.c_str(), zone.param.c_str(),
-			        zone.label.c_str(), zone.extraParam.c_str(), zone.targetWarp.c_str());
+			if (existing) {
+				EgyptZoneRect extra;
+				extra.left   = rawLeft;
+				extra.top    = rawTop;
+				extra.right  = rawLeft + rawWidth;
+				extra.bottom = rawTop + rawHeight;
+				existing->extraRects.push_back(extra);
+				warning("Egypt: zone %03u extra rect #%u=(%u,%u %ux%u)",
+				        zoneId, (uint)(existing->extraRects.size() + 1),
+				        rawLeft, rawTop, rawWidth, rawHeight);
+			} else {
+				EgyptZone zone;
+				zone.id       = zoneId;
+				zone.left     = rawLeft;
+				zone.top      = rawTop;
+				zone.right    = rawLeft + rawWidth;
+				zone.bottom   = rawTop + rawHeight;
+				zone.actionId = actionId;
+				zone.command  = Common::String(commandBuffer);
+				zone.command.trim();
+				parseZoneCommand(zone);
+				_currentScene.zones.push_back(zone);
+
+				warning("Egypt: zone %03u rect=(%u,%u %ux%u) action=%u command=%s param=%s label=%s target=%s",
+				        zone.id, zone.left, zone.top, rawWidth, rawHeight,
+				        zone.actionId, zone.command.c_str(), zone.param.c_str(),
+				        zone.label.c_str(), zone.targetWarp.c_str());
+			}
 			continue;
 		}
 
@@ -149,19 +169,6 @@ void CryOmni3DEngine_Egypt::parseSceneDefinition(const Common::Path &filename, c
 		logScriptLine(line);
 	}
 
-	// Fixed-view scenes (TGA, no HNM) are identified by a "let IndiceVisuel..." line
-	// in the warpinit block. All such scenes use a 640×480 TGA with screen-space zone coords.
-	for (Common::Array<Common::String>::const_iterator it = _currentScene.scriptLines.begin();
-	     it != _currentScene.scriptLines.end(); ++it) {
-		Common::String lower = *it;
-		lower.toLowercase();
-		if (lower.find("indicevisuel") != Common::String::npos) {
-			_currentScene.isFixedView = true;
-			warning("Egypt: scene %s is a fixed-view TGA scene (IndiceVisuel detected)",
-			        _currentScene.name.c_str());
-			break;
-		}
-	}
 }
 
 void CryOmni3DEngine_Egypt::parseZoneCommand(EgyptZone &zone) {
@@ -178,11 +185,7 @@ void CryOmni3DEngine_Egypt::parseZoneCommand(EgyptZone &zone) {
 			continue;
 		}
 		if (token.hasPrefixIgnoreCase("HNM:")) {
-			Common::String hnmValue = token.substr(4);
-			if (zone.extraParam.empty())
-				zone.extraParam = hnmValue;
-			else
-				zone.extraParam += "/" + hnmValue;
+			zone.hnmSequence.push_back(token.substr(4));
 			continue;
 		}
 		if (zone.label.empty())

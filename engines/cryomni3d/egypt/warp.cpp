@@ -84,7 +84,7 @@ bool CryOmni3DEngine_Egypt::handleWarpClick(const Common::Point &mousePos, const
 		}
 
 		_pendingWarpTarget.clear();
-		runPrototypeWarpScript(zoneClick, currentAlpha, currentBeta);
+		runEndInit(zoneClick);
 		if (_pendingWarpTarget.empty() && shouldUseDirectWarpFallback(*zone, zoneClick) &&
 		    zone->commandName.equalsIgnoreCase("ALLER_WARP") &&
 		    !zone->targetWarp.empty()) {
@@ -102,8 +102,16 @@ bool CryOmni3DEngine_Egypt::handleWarpClick(const Common::Point &mousePos, const
 }
 
 bool CryOmni3DEngine_Egypt::zoneContainsWarpPoint(const EgyptZone &zone, const Common::Point &warpPoint) const {
-	return warpPoint.x >= (int)zone.left && warpPoint.x < (int)zone.right &&
-	       warpPoint.y >= (int)zone.top && warpPoint.y < (int)zone.bottom;
+	if (warpPoint.x >= (int)zone.left && warpPoint.x < (int)zone.right &&
+	    warpPoint.y >= (int)zone.top  && warpPoint.y < (int)zone.bottom)
+		return true;
+	for (uint i = 0; i < zone.extraRects.size(); ++i) {
+		const EgyptZoneRect &r = zone.extraRects[i];
+		if (warpPoint.x >= (int)r.left && warpPoint.x < (int)r.right &&
+		    warpPoint.y >= (int)r.top  && warpPoint.y < (int)r.bottom)
+			return true;
+	}
+	return false;
 }
 
 const EgyptZone *CryOmni3DEngine_Egypt::findHoveredActiveZone(const Common::Point &warpPoint) const {
@@ -152,10 +160,17 @@ void CryOmni3DEngine_Egypt::rememberPendingArrival(const EgyptZone &zone, uint z
 	_pendingWarp.fromContext = _currentContextName;
 	_pendingWarp.toScene = zone.targetWarp;
 	_pendingWarp.toContext = isEgyptContextName(zone.targetWarp) ? zone.targetWarp : Common::String();
-	_pendingWarp.hnmName = zone.extraParam;
+	{
+		Common::String hnmJoined;
+		for (uint si = 0; si < zone.hnmSequence.size(); ++si) {
+			if (si > 0) hnmJoined += "/";
+			hnmJoined += zone.hnmSequence[si];
+		}
+		_pendingWarp.hnmName  = hnmJoined;
+		_pendingWarp.zoneExtra = hnmJoined.empty() ? zone.extraParam : hnmJoined;
+	}
 	_pendingWarp.zoneCommand = calledCommand ? calledCommand : zone.commandName;
 	_pendingWarp.zoneParam = zone.param;
-	_pendingWarp.zoneExtra = zone.extraParam;
 	_pendingWarp.zoneId = zone.id;
 	_pendingWarp.zoneclic = zoneclic;
 	_pendingWarp.viaHnm = viaHnm;
@@ -414,28 +429,6 @@ bool CryOmni3DEngine_Egypt::shouldUseDirectWarpFallback(const EgyptZone &zone, u
 	return true;
 }
 
-void CryOmni3DEngine_Egypt::logWarpTrace(const Common::String &matchedName, const EgyptCentrage *matchedCentrage,
-                                         const EgyptResolvedCentrage &resolved) const {
-	if (!_pendingWarp.active)
-		return;
-
-	Common::String matchedCentrageText("none");
-	if (matchedCentrage) {
-		matchedCentrageText = Common::String::format("%s%c%0.3f",
-		                                             matchedCentrage->name.c_str(),
-		                                             matchedCentrage->op,
-		                                             matchedCentrage->alpha);
-		if (matchedCentrage->hasBeta)
-			matchedCentrageText += Common::String::format(" %0.3f", matchedCentrage->beta);
-	}
-
-	warning("EGYPT_WARP_TRACE: fromScene=%s fromContext=%s zoneclic=%u called=%s zoneId=%u toScene=%s toContext=%s sourceAlpha=%0.3f sourceBeta=%0.3f matchedBy=%s matchedCentrage=%s rawFinalAlpha=%0.3f normalizedFinalAlpha=%0.3f finalBeta=%0.3f",
-	        _pendingWarp.fromScene.c_str(), _pendingWarp.fromContext.c_str(), _pendingWarp.zoneclic,
-	        _pendingWarp.zoneCommand.c_str(), _pendingWarp.zoneId, _pendingWarp.toScene.c_str(),
-	        _pendingWarp.toContext.c_str(), _pendingWarp.sourceAlpha, _pendingWarp.sourceBeta,
-	        matchedName.empty() ? "none" : matchedName.c_str(), matchedCentrageText.c_str(),
-	        resolved.rawFinalAlpha, resolved.normalizedFinalAlpha, resolved.finalBeta);
-}
 
 } // End of namespace Egypt
 } // End of namespace CryOmni3D

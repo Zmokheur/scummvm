@@ -330,33 +330,6 @@ private:
 
 } // End of anonymous namespace
 
-int CryOmni3DEngine_Egypt::alphaToPanoramaX(double alpha) const {
-	while (alpha >= 2.0 * M_PI)
-		alpha -= 2.0 * M_PI;
-	while (alpha < 0.0)
-		alpha += 2.0 * M_PI;
-
-	const double panoramaX = 2048.0 - alpha * 2048.0 / (2.0 * M_PI);
-	int wrapped = (int)panoramaX % 2048;
-	if (wrapped < 0)
-		wrapped += 2048;
-	return wrapped;
-}
-
-Common::Path CryOmni3DEngine_Egypt::findSceneTgaPath(const Common::String &sceneName) const {
-	const int currentLevel = getScriptVariableValue("Level");
-	if (currentLevel >= 1 && currentLevel <= 6) {
-		Common::Path p(Common::String::format("SPRITE/LEVEL%d/%s.TGA", currentLevel, sceneName.c_str()));
-		if (Common::File::exists(p))
-			return p;
-	}
-	for (int level = 1; level <= 6; ++level) {
-		Common::Path p(Common::String::format("SPRITE/LEVEL%d/%s.TGA", level, sceneName.c_str()));
-		if (Common::File::exists(p))
-			return p;
-	}
-	return Common::Path();
-}
 
 bool CryOmni3DEngine_Egypt::displayCurrentWarpFixed(const Graphics::Surface *frame) {
 	if (!frame)
@@ -440,99 +413,72 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpFixed(const Graphics::Surface *fra
 	return !_pendingWarpTarget.empty();
 }
 
-bool CryOmni3DEngine_Egypt::displayCurrentWarpPreview(const Common::Path &filename) {
-	// Fixed-view scenes (flagged by IndiceVisuel in their DEF) always use a TGA, never an HNM.
-	if (_currentScene.isFixedView) {
-		const Common::Path tgaPath = findSceneTgaPath(_currentScene.name);
-		if (!tgaPath.empty()) {
-			Graphics::ManagedSurface tgaSurface;
-			if (loadWrappedTgaSurface(tgaPath, tgaSurface)) {
-				warning("Egypt: fixed view for %s using %s",
-				        _currentScene.name.c_str(),
-				        tgaPath.toString(Common::Path::kNativeSeparator).c_str());
-				return displayCurrentWarpFixed(&tgaSurface.rawSurface());
-			}
+bool CryOmni3DEngine_Egypt::displayCurrentWarpPreview(const Common::Path &warpPath) {
+	// Determine display mode solely from the pre-built asset table.
+	enum SceneDisplayMode { kRotation, kFixed, kNone };
+	SceneDisplayMode mode;
+
+	if (_currentSceneAssets.size() > (uint)kAssetWarpHNM &&
+	    _currentSceneAssets[kAssetWarpHNM].present) {
+		mode = kRotation;
+	} else if (_currentSceneAssets.size() > (uint)kAssetBackTGA &&
+	           _currentSceneAssets[kAssetBackTGA].present) {
+		mode = kFixed;
+	} else {
+		mode = kNone;
+	}
+
+	switch (mode) {
+	case kFixed: {
+		const Common::Path tgaPath = _currentSceneAssets[kAssetBackTGA].path;
+
+		if (tgaPath.empty()) {
+			warning("Egypt: fixed view %s has no usable TGA", _currentScene.name.c_str());
+			return false;
 		}
-		warning("Egypt: fixed view scene %s has no TGA at expected path",
+		Graphics::ManagedSurface tgaSurface;
+		if (!loadWrappedTgaSurface(tgaPath, tgaSurface)) {
+			warning("Egypt: fixed view %s failed to load TGA %s",
+			        _currentScene.name.c_str(),
+			        tgaPath.toString(Common::Path::kNativeSeparator).c_str());
+			return false;
+		}
+		warning("Egypt: fixed view %s using %s",
+		        _currentScene.name.c_str(),
+		        tgaPath.toString(Common::Path::kNativeSeparator).c_str());
+		return displayCurrentWarpFixed(&tgaSurface.rawSurface());
+	}
+
+	case kRotation: {
+		Common::File file;
+		if (!file.open(warpPath)) {
+			warning("Egypt: rotation view %s failed to open warp %s",
+			        _currentScene.name.c_str(),
+			        warpPath.toString(Common::Path::kNativeSeparator).c_str());
+			return false;
+		}
+		EgyptPreviewHNMDecoder imageDecoder(g_system->getScreenFormat());
+		if (!imageDecoder.loadStream(file)) {
+			warning("Egypt: rotation view %s failed to decode warp %s",
+			        _currentScene.name.c_str(),
+			        warpPath.toString(Common::Path::kNativeSeparator).c_str());
+			return false;
+		}
+		if (imageDecoder.hasPalette())
+			setupPalette(imageDecoder.getPalette().data(), 0, imageDecoder.getPalette().size());
+		const Graphics::Surface *frame = imageDecoder.getSurface();
+		if (!frame) {
+			warning("Egypt: rotation view %s got no frame from warp", _currentScene.name.c_str());
+			return false;
+		}
+		return displayCurrentWarpRotation(frame);
+	}
+
+	default:
+		warning("Egypt: scene %s has no displayable asset (no warp HNM, no TGA)",
 		        _currentScene.name.c_str());
 		return false;
 	}
-
-	Common::File file;
-	if (!file.open(filename)) {
-		warning("Egypt: preview failed to open warp %s",
-		        filename.toString(Common::Path::kNativeSeparator).c_str());
-		return false;
-	}
-
-	EgyptPreviewHNMDecoder imageDecoder(g_system->getScreenFormat());
-	if (!imageDecoder.loadStream(file)) {
-		warning("Egypt: preview failed to decode warp %s",
-		        filename.toString(Common::Path::kNativeSeparator).c_str());
-		return false;
-	}
-
-	if (imageDecoder.hasPalette()) {
-		setupPalette(imageDecoder.getPalette().data(), 0, imageDecoder.getPalette().size());
-	}
-
-	const Graphics::Surface *frame = imageDecoder.getSurface();
-	if (!frame) {
-		warning("Egypt: preview got no frame for warp %s",
-		        filename.toString(Common::Path::kNativeSeparator).c_str());
-		return false;
-	}
-
-	// Story entry scenes, visit hubs, and any runtime warp arrivals should land
-	// directly in the interactive panorama instead of the temporary crop preview.
-	if (_currentScene.name.equalsIgnoreCase("S01") || _currentScene.name.equalsIgnoreCase("S03") ||
-	    isEgyptContextName(_currentScene.name) || _pendingWarp.active)
-		return displayCurrentWarpRotation(frame);
-
-	double arrivalAlpha = 0.0;
-	double arrivalBeta = 0.0;
-	bool hasArrivalAngles = false;
-	int arrivalPanoramaX = consumeArrivalPanoramaX(arrivalAlpha, arrivalBeta, hasArrivalAngles);
-	if (hasArrivalAngles) {
-		arrivalPanoramaX = alphaToPanoramaX(arrivalAlpha);
-		setRuntimeViewAngles(arrivalAlpha, arrivalBeta, true);
-		warning("Egypt: preview aligned %s to script angles alpha=%0.3f beta=%0.3f panorama x=%d",
-		        _currentScene.name.c_str(), arrivalAlpha, arrivalBeta, arrivalPanoramaX);
-	} else if (arrivalPanoramaX >= 0) {
-		warning("Egypt: preview aligned %s to panorama x=%d",
-		        _currentScene.name.c_str(), arrivalPanoramaX);
-	}
-
-	const int frameWidth = static_cast<int>(frame->w);
-	const int frameHeight = static_cast<int>(frame->h);
-	const int drawWidth = MIN(frameWidth, 640);
-	const int drawHeight = MIN(frameHeight, 480);
-	int srcX = MAX(0, (frameWidth - drawWidth) / 2);
-	const int srcY = MAX(0, (frameHeight - drawHeight) / 2);
-	if (arrivalPanoramaX >= 0 && frameWidth > drawWidth)
-		srcX = CLIP<int>(arrivalPanoramaX - drawWidth / 2, 0, frameWidth - drawWidth);
-
-	warning("Egypt: preview displays %dx%d crop at %d,%d from %s",
-	        drawWidth, drawHeight, srcX, srcY, _currentScene.warpName.c_str());
-
-	Graphics::Surface previewFrame;
-	const Graphics::Surface *displayFrame = frame;
-	if (_hasPendingOverlay) {
-		previewFrame.copyFrom(*frame);
-		applyOverlayToSurface(previewFrame);
-		displayFrame = &previewFrame;
-	}
-
-	fillSurface(0);
-	g_system->copyRectToScreen(displayFrame->getBasePtr(srcX, srcY), displayFrame->pitch,
-	                           0, 0, drawWidth, drawHeight);
-	g_system->updateScreen();
-	previewFrame.free();
-	if (_pendingWarp.active)
-		logRuntimeWarp(_pendingRuntimeMatchedCentrage, _pendingRuntimeResolved, hasArrivalAngles);
-	clearPendingWarpRequest();
-	g_system->delayMillis(750);
-	return true;
 }
 
 bool CryOmni3DEngine_Egypt::displayCurrentWarpRotation(const Graphics::Surface *frame) {

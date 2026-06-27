@@ -27,88 +27,6 @@
 namespace CryOmni3D {
 namespace Egypt {
 
-void CryOmni3DEngine_Egypt::collectInitialActiveZones() {
-	_currentScene.activeZones.clear();
-	double sourceAlpha = 0.0;
-	double sourceBeta = 0.0;
-	bool sourceAvailable = false;
-	getRuntimeSourceViewAngles(sourceAlpha, sourceBeta, sourceAvailable);
-	bool scriptProducedState = runPrototypeWarpScript(0, sourceAlpha, sourceBeta);
-
-	if (!scriptProducedState) {
-		for (Common::Array<EgyptZone>::const_iterator it = _currentScene.zones.begin();
-		     it != _currentScene.zones.end(); ++it) {
-			if (it->left != 0 || it->top != 0 || it->right != 0 || it->bottom != 0)
-				_currentScene.activeZones.push_back(it->id);
-		}
-
-		warning("Egypt: no explicit zone activation in %s, using default active zones from scene data",
-		        _currentScene.name.c_str());
-	}
-
-	// Auto-activate any zone whose ID is directly compared against 'zoneclic' in the script
-	// (e.g. "if zoneclic!=3 goto Suite1" or "if zoneclic=4 aller_warp 5"). Those zones must
-	// be clickable for the comparison to ever be meaningful, but many scenes omit their
-	// explicit zoneactive call (S06 zones 3/4, S01 ModeVisite zone 2, S03 zone 4, …).
-	for (Common::Array<Common::String>::const_iterator it = _currentScene.scriptLines.begin();
-	     it != _currentScene.scriptLines.end(); ++it) {
-		Common::String lower = *it;
-		lower.toLowercase();
-		const char *src = lower.c_str();
-		const char *needle = "zoneclic";
-		const size_t needleLen = 8;
-
-		for (const char *pos = strstr(src, needle); pos != nullptr;
-		     pos = strstr(pos + needleLen, needle)) {
-			const char *cursor = pos + needleLen;
-			// Accept "!=N" or "=N" (not ">", "<", etc. — unused with zoneclic)
-			if (*cursor == '!' && *(cursor + 1) == '=')
-				cursor += 2;
-			else if (*cursor == '=')
-				cursor += 1;
-			else
-				continue;
-
-			if (!(*cursor >= '0' && *cursor <= '9'))
-				continue;
-
-			char *endPtr = nullptr;
-			const long zoneId = strtol(cursor, &endPtr, 10);
-			if (endPtr == cursor || zoneId <= 0)
-				continue;
-
-			const EgyptZone *zone = findZoneById((uint)zoneId);
-			if (!zone || (zone->left == 0 && zone->top == 0 &&
-			              zone->right == 0 && zone->bottom == 0))
-				continue;
-
-			bool alreadyActive = false;
-			for (Common::Array<uint>::const_iterator activeIt = _currentScene.activeZones.begin();
-			     activeIt != _currentScene.activeZones.end(); ++activeIt) {
-				if (*activeIt == (uint)zoneId) {
-					alreadyActive = true;
-					break;
-				}
-			}
-			if (!alreadyActive) {
-				_currentScene.activeZones.push_back((uint)zoneId);
-				warning("Egypt: auto-activating zone %u in %s (referenced by zoneclic comparison)",
-				        (uint)zoneId, _currentScene.name.c_str());
-			}
-		}
-	}
-
-	Common::String activeList;
-	for (Common::Array<uint>::const_iterator it = _currentScene.activeZones.begin();
-	     it != _currentScene.activeZones.end(); ++it) {
-		if (!activeList.empty())
-			activeList += ",";
-		activeList += Common::String::format("%u", *it);
-	}
-
-	warning("Egypt: initial active zones for %s = [%s]",
-	        _currentScene.name.c_str(), activeList.c_str());
-}
 
 bool CryOmni3DEngine_Egypt::runPrototypeWarpScript(int zoneClick, double sourceAlpha, double sourceBeta) {
 	Common::Array<Common::String> blockLines;
@@ -148,10 +66,13 @@ bool CryOmni3DEngine_Egypt::executeScriptBlock(const Common::Array<Common::Strin
 	bool producedState = false;
 
 	for (uint i = 0; i < lines.size(); ++i) {
-		if (lines[i].hasSuffix(":")) {
-			Common::String label = lines[i];
+		Common::String trimmed = lines[i];
+		trimmed.trim();
+		if (!trimmed.empty() && trimmed.hasSuffix(":")) {
+			Common::String label = trimmed;
 			label.deleteLastChar();
-			labels[label] = i;
+			if (!label.empty())
+				labels[label] = i;
 		}
 	}
 
@@ -320,7 +241,7 @@ bool CryOmni3DEngine_Egypt::executeScriptCommand(const Common::String &rawLine,
 
 	static const char *const kSafeNoopPrefixes[] = {
 		"music", "stopmusic", "sound", "sounds", "bmouse", "dialoguer",
-		"show", "hide"
+		"show", "hide", "son_3d", "fonction", "inventaire", "and"
 	};
 	for (uint i = 0; i < ARRAYSIZE(kSafeNoopPrefixes); ++i) {
 		if (line.hasPrefixIgnoreCase(kSafeNoopPrefixes[i])) {

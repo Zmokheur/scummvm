@@ -150,10 +150,13 @@ bool CryOmni3DEngine_Egypt::loadSymbolDefinitions(const Common::Path &filename) 
 		if (sscanf(line.c_str(), "%31s %127s %d", kind, name, &value) != 3)
 			continue;
 
-		if (scumm_stricmp(kind, "variable") != 0)
+		if (scumm_stricmp(kind, "variable") == 0) {
+			_scriptConstants[Common::String(name)] = value;
+		} else if (scumm_stricmp(kind, "objet") == 0) {
+			_scriptConstants[Common::String("Objet") + name] = value;
+		} else {
 			continue;
-
-		_scriptConstants[Common::String(name)] = value;
+		}
 	}
 
 	warning("Egypt: loaded %u script constant(s) from %s",
@@ -165,19 +168,22 @@ Common::Path CryOmni3DEngine_Egypt::resolveSceneDefinitionPath(const Common::Str
 	Common::String normalizedName = sceneName;
 	normalizedName.replace('\\', '/');
 
+	// EXE order: ref\FR\ first (0x411099), then sprite\Level%d\ (0x41112e)
+	Common::Path refPath(Common::String::format("REF/FR/%s.DEF", normalizedName.c_str()));
+	if (Common::File::exists(refPath))
+		return refPath;
+
 	const int currentLevel = getScriptVariableValue("Level");
 	if (currentLevel >= 1 && currentLevel <= 6) {
-		Common::String levelPath = Common::String::format("SPRITE/LEVEL%d/%s.DEF",
-		                                                  currentLevel, normalizedName.c_str());
-		Common::Path levelDefPath(levelPath);
+		Common::Path levelDefPath(Common::String::format("SPRITE/LEVEL%d/%s.DEF",
+		                                                 currentLevel, normalizedName.c_str()));
 		if (Common::File::exists(levelDefPath))
 			return levelDefPath;
 	}
 
 	for (int level = 1; level <= 6; ++level) {
-		Common::String levelPath = Common::String::format("SPRITE/LEVEL%d/%s.DEF",
-		                                                  level, normalizedName.c_str());
-		Common::Path levelDefPath(levelPath);
+		Common::Path levelDefPath(Common::String::format("SPRITE/LEVEL%d/%s.DEF",
+		                                                 level, normalizedName.c_str()));
 		if (Common::File::exists(levelDefPath))
 			return levelDefPath;
 	}
@@ -197,7 +203,7 @@ void CryOmni3DEngine_Egypt::loadScene(const Common::String &sceneName) {
 	_hasPendingOverlay = false;
 
 	if (_pendingWarp.viaHnm && !_pendingWarp.hnmName.empty())
-		playHnmTransition(_pendingWarp.hnmName);
+		executeHnmSequence(_pendingWarp.hnmName);
 
 	Common::Path scenePath = resolveSceneDefinitionPath(sceneName);
 	parseSceneDefinition(scenePath, sceneName);
@@ -223,30 +229,11 @@ void CryOmni3DEngine_Egypt::loadScene(const Common::String &sceneName) {
 
 	warning("Egypt: scene %s uses warp %s and has %u zone(s)",
 	        _currentScene.name.c_str(), _currentScene.warpName.c_str(), _currentScene.zones.size());
-	collectInitialActiveZones();
+	_currentSceneAssets = detectSceneAssets(sceneName, getScriptVariableValue("Level"));
+	runSceneStartup();
 	displayCurrentWarpPreview(warpPath);
 }
 
-void CryOmni3DEngine_Egypt::playHnmTransition(const Common::String &hnmList) {
-	Common::StringTokenizer tok(hnmList, "/");
-	while (!tok.empty()) {
-		Common::String name = tok.nextToken();
-		if (name.empty())
-			continue;
-
-		Common::Path path(Common::String::format("HNM/%s.HNS", name.c_str()));
-		if (!Common::File::exists(path)) {
-			warning("Egypt: HNM transition '%s' not found at %s", name.c_str(),
-			        path.toString(Common::Path::kNativeSeparator).c_str());
-			continue;
-		}
-
-		playHnmFile(path);
-
-		if (shouldAbort())
-			break;
-	}
-}
 
 void CryOmni3DEngine_Egypt::playHnmFile(const Common::Path &path) {
 	Common::File file;

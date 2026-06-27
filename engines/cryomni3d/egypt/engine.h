@@ -106,7 +106,7 @@ private:
 
 	void setupSprites();
 	bool loadInterfaceSprites(const Common::Path &filename);
-	void playHnmTransition(const Common::String &hnmList);
+
 	void playHnmFile(const Common::Path &path);
 	bool loadSymbolDefinitions(const Common::Path &filename);
 	bool setInterfaceCursor(uint spriteId) const;
@@ -137,7 +137,7 @@ private:
 	bool displayCurrentWarpPreview(const Common::Path &filename);
 	bool displayCurrentWarpRotation(const Graphics::Surface *frame);
 	bool displayCurrentWarpFixed(const Graphics::Surface *frame);
-	Common::Path findSceneTgaPath(const Common::String &sceneName) const;
+
 	bool handleWarpClick(const Common::Point &mousePos, const Common::Point &warpPoint,
 	                     double currentAlpha, double currentBeta);
 	bool zoneContainsWarpPoint(const EgyptZone &zone, const Common::Point &warpPoint) const;
@@ -146,7 +146,7 @@ private:
 	uint getCursorFrameForZone(const EgyptZone &zone) const;
 	uint getDefaultCursorFrame() const;
 	uint getCursorFrameForHeldObject(int heldObjectId, bool variant) const;
-	int alphaToPanoramaX(double alpha) const;
+
 	void rememberPendingArrival(const EgyptZone &zone, uint zoneclic, bool viaHnm, bool sourceOrientationAvailable,
 	                           double alpha, double beta, const char *calledCommand);
 	void clearPendingWarpRequest();
@@ -162,7 +162,7 @@ private:
 	uint resolveScriptZoneClick(const EgyptZone &zone) const;
 	bool shouldUseDirectWarpFallback(const EgyptZone &zone, uint zoneClick) const;
 	void parseZoneCommand(EgyptZone &zone);
-	void collectInitialActiveZones();
+
 	bool runPrototypeWarpScript(int zoneClick = 0, double sourceAlpha = 0.0, double sourceBeta = 0.0);
 	bool executeScriptBlock(const Common::Array<Common::String> &lines, uint zoneClick,
 	                        double sourceAlpha, double sourceBeta);
@@ -181,11 +181,21 @@ private:
 	void logUnsupportedScriptCommand(const Common::String &line) const;
 	void logRuntimeWarp(const Common::String &matchedCentrage, const EgyptResolvedCentrage &resolved,
 	                    bool appliedToRenderer) const;
-	void logWarpTrace(const Common::String &matchedName, const EgyptCentrage *matchedCentrage,
-	                  const EgyptResolvedCentrage &resolved) const;
+
 	bool loadSceneOverlay(const Common::String &sceneName);
 	void decodeOverlayFrame(uint frameIndex);
 	void applyOverlayToSurface(Graphics::Surface &surface) const;
+
+	// logic.cpp — scene lifecycle
+	Common::Array<EgyptSceneAsset> detectSceneAssets(const Common::String &sceneName, int level) const;
+	Common::Array<Common::String>  extractScriptBlock(const Common::String &fromMarker,
+	                                                   const Common::String &toMarker) const;
+	void runWarpInit();
+	void runEndInit(int zoneclic);
+	void autoActivateZoneclicZones();
+	void runSceneStartup();
+	void executeHnmSequence(const Common::String &hnmJoined);
+	void handleZoneAction(const EgyptZone &zone, double alpha, double beta);
 
 	EgyptScene _currentScene;
 	Common::HashMap<Common::String, int, Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo> _scriptVariables;
@@ -214,6 +224,7 @@ private:
 	Common::HashMap<int, Common::Array<int> > _documentationTree;
 	bool _documentationDataLoaded = false;
 	uint _lastHoveredZoneId;
+	Common::Array<EgyptSceneAsset> _currentSceneAssets;
 };
 
 } // End of namespace Egypt

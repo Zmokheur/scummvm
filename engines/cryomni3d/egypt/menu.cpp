@@ -572,10 +572,10 @@ Common::String CryOmni3DEngine_Egypt::startVisitMode() {
 	_pendingWarpTarget.clear();
 	_scriptVariables["FlagVisite"] = 1;
 	_scriptVariables["main"] = 0;
-	_scriptVariables["Level"] = 1;
+	_scriptVariables["Level"] = 0;
 	_currentContextName = "JOUR";
 
-	warning("EGYPT_MENU: selection=Visit entryScene=JOUR context=JOUR FlagVisite=1 reason=fallback_confirmed_data_hub");
+	warning("EGYPT_MENU: selection=Visit entryScene=JOUR context=JOUR FlagVisite=1 Level=0 reason=visit_mode_no_story_chapter");
 	return "JOUR";
 }
 

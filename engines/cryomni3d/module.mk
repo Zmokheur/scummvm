@@ -37,6 +37,7 @@ MODULE_OBJS += \
 	egypt/cursor.o \
 	egypt/documentation.o \
 	egypt/engine.o \
+	egypt/logic.o \
 	egypt/menu.o \
 	egypt/panorama.o \
 	egypt/scene.o \
