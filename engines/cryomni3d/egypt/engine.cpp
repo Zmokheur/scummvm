@@ -94,6 +94,24 @@ Common::Error CryOmni3DEngine_Egypt::run() {
 		case EgyptStartupMode::kDocumentation:
 			startDocumentationMode();
 			break;
+		case EgyptStartupMode::kDebugLevel1:
+			sceneName = startDebugLevel(1, "S00");
+			break;
+		case EgyptStartupMode::kDebugLevel2:
+			sceneName = startDebugLevel(2, "D01");
+			break;
+		case EgyptStartupMode::kDebugLevel3:
+			sceneName = startDebugLevel(3, "A02");
+			break;
+		case EgyptStartupMode::kDebugLevel4:
+			sceneName = startDebugLevel(4, "N01A");
+			break;
+		case EgyptStartupMode::kDebugLevel5:
+			sceneName = startDebugLevel(5, "M01");
+			break;
+		case EgyptStartupMode::kDebugLevel6:
+			sceneName = startDebugLevel(6, "K43");
+			break;
 		case EgyptStartupMode::kMainMenu:
 		case EgyptStartupMode::kQuit:
 			break;

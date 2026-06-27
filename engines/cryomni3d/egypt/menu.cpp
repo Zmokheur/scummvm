@@ -49,8 +49,16 @@ enum EgyptMenuEntry {
 	kEgyptMenuVisit = 1,
 	kEgyptMenuDocumentation = 2,
 	kEgyptMenuQuit = 3,
-	kEgyptMenuCount = 4
+	kEgyptMenuDebugLevel1 = 4,
+	kEgyptMenuDebugLevel2 = 5,
+	kEgyptMenuDebugLevel3 = 6,
+	kEgyptMenuDebugLevel4 = 7,
+	kEgyptMenuDebugLevel5 = 8,
+	kEgyptMenuDebugLevel6 = 9,
+	kEgyptMenuCount = 10
 };
+
+static const char *const kDebugLevelScenes[] = { "S00", "D01", "A02", "N01A", "M01", "K43" };
 
 void drawCenteredString(Graphics::ManagedSurface &surface, const Graphics::Font *font,
                         const Common::String &text, int y, uint32 color) {
@@ -331,9 +339,9 @@ void CryOmni3DEngine_Egypt::drawMenuScreen(Graphics::ManagedSurface &surface, in
 	if (titleFont)
 		titleFont->drawString(&surface, title, 56, 266, 320, titleColor);
 
-	const char *const hotkeys[kEgyptMenuCount] = { "1", "2", "3", "Esc" };
+	const char *const hotkeys[kEgyptMenuDebugLevel1] = { "1", "2", "3", "Esc" };
 	int y = 304;
-	for (int i = 0; i < kEgyptMenuCount; ++i, y += 30) {
+	for (int i = 0; i < kEgyptMenuDebugLevel1; ++i, y += 30) {
 		const uint32 color = (i == hoveredEntry) ? hoverColor : textColor;
 		Common::String line = Common::String::format("[%s] %s", hotkeys[i], _menuLabels[i].c_str());
 		if (bodyFont)
@@ -342,6 +350,25 @@ void CryOmni3DEngine_Egypt::drawMenuScreen(Graphics::ManagedSurface &surface, in
 
 	if (bodyFont)
 		bodyFont->drawString(&surface, hasBackground ? "ACC_FR.TGA + libelles du jeu" : "Fallback menu", 58, 410, 320, hintColor);
+
+	const uint32 debugBorderColor = surface.format.RGBToColor(60, 140, 60);
+	const uint32 debugTitleColor = surface.format.RGBToColor(100, 210, 100);
+
+	const Common::Rect debugPanel(410, 240, 632, 452);
+	surface.fillRect(debugPanel, panelColor);
+	surface.frameRect(debugPanel, debugBorderColor);
+
+	if (titleFont)
+		titleFont->drawString(&surface, "DEBUG", 426, 258, 200, debugTitleColor);
+
+	int dy = 292;
+	for (int i = kEgyptMenuDebugLevel1; i < kEgyptMenuCount; ++i, dy += 25) {
+		const int level = i - kEgyptMenuDebugLevel1 + 1;
+		const uint32 color = (i == hoveredEntry) ? hoverColor : textColor;
+		Common::String line = Common::String::format("[F%d] L%d -> %s", level, level, kDebugLevelScenes[i - kEgyptMenuDebugLevel1]);
+		if (bodyFont)
+			bodyFont->drawString(&surface, line, 422, dy, 204, color);
+	}
 }
 
 void CryOmni3DEngine_Egypt::playStartupLogoIfPresent() {
@@ -377,8 +404,12 @@ CryOmni3DEngine_Egypt::EgyptStartupMode CryOmni3DEngine_Egypt::showMainMenu() {
 
 	Common::Rect boxes[kEgyptMenuCount];
 	int hoveredEntry = kEgyptMenuStory;
-	for (int i = 0; i < kEgyptMenuCount; ++i)
+	for (int i = 0; i < kEgyptMenuDebugLevel1; ++i)
 		boxes[i] = Common::Rect(52, 300 + i * 30, 366, 324 + i * 30);
+	for (int i = kEgyptMenuDebugLevel1; i < kEgyptMenuCount; ++i) {
+		const int di = i - kEgyptMenuDebugLevel1;
+		boxes[i] = Common::Rect(414, 292 + di * 25, 628, 314 + di * 25);
+	}
 
 	showMouse(true);
 	setInterfaceCursor(kEgyptCursorDefault);
@@ -422,6 +453,18 @@ CryOmni3DEngine_Egypt::EgyptStartupMode CryOmni3DEngine_Egypt::showMainMenu() {
 						return EgyptStartupMode::kVisit;
 					case kEgyptMenuDocumentation:
 						return EgyptStartupMode::kDocumentation;
+					case kEgyptMenuDebugLevel1:
+						return EgyptStartupMode::kDebugLevel1;
+					case kEgyptMenuDebugLevel2:
+						return EgyptStartupMode::kDebugLevel2;
+					case kEgyptMenuDebugLevel3:
+						return EgyptStartupMode::kDebugLevel3;
+					case kEgyptMenuDebugLevel4:
+						return EgyptStartupMode::kDebugLevel4;
+					case kEgyptMenuDebugLevel5:
+						return EgyptStartupMode::kDebugLevel5;
+					case kEgyptMenuDebugLevel6:
+						return EgyptStartupMode::kDebugLevel6;
 					default:
 						return EgyptStartupMode::kQuit;
 					}
@@ -442,6 +485,24 @@ CryOmni3DEngine_Egypt::EgyptStartupMode CryOmni3DEngine_Egypt::showMainMenu() {
 		} else if (keycode == Common::KEYCODE_ESCAPE || keycode == Common::KEYCODE_q) {
 			showMouse(false);
 			return EgyptStartupMode::kQuit;
+		} else if (keycode == Common::KEYCODE_F1) {
+			showMouse(false);
+			return EgyptStartupMode::kDebugLevel1;
+		} else if (keycode == Common::KEYCODE_F2) {
+			showMouse(false);
+			return EgyptStartupMode::kDebugLevel2;
+		} else if (keycode == Common::KEYCODE_F3) {
+			showMouse(false);
+			return EgyptStartupMode::kDebugLevel3;
+		} else if (keycode == Common::KEYCODE_F4) {
+			showMouse(false);
+			return EgyptStartupMode::kDebugLevel4;
+		} else if (keycode == Common::KEYCODE_F5) {
+			showMouse(false);
+			return EgyptStartupMode::kDebugLevel5;
+		} else if (keycode == Common::KEYCODE_F6) {
+			showMouse(false);
+			return EgyptStartupMode::kDebugLevel6;
 		} else if (keycode == Common::KEYCODE_UP) {
 			hoveredEntry = (hoveredEntry + kEgyptMenuCount - 1) % kEgyptMenuCount;
 			redraw = true;
@@ -457,6 +518,18 @@ CryOmni3DEngine_Egypt::EgyptStartupMode CryOmni3DEngine_Egypt::showMainMenu() {
 				return EgyptStartupMode::kVisit;
 			case kEgyptMenuDocumentation:
 				return EgyptStartupMode::kDocumentation;
+			case kEgyptMenuDebugLevel1:
+				return EgyptStartupMode::kDebugLevel1;
+			case kEgyptMenuDebugLevel2:
+				return EgyptStartupMode::kDebugLevel2;
+			case kEgyptMenuDebugLevel3:
+				return EgyptStartupMode::kDebugLevel3;
+			case kEgyptMenuDebugLevel4:
+				return EgyptStartupMode::kDebugLevel4;
+			case kEgyptMenuDebugLevel5:
+				return EgyptStartupMode::kDebugLevel5;
+			case kEgyptMenuDebugLevel6:
+				return EgyptStartupMode::kDebugLevel6;
 			default:
 				return EgyptStartupMode::kQuit;
 			}
@@ -482,6 +555,16 @@ Common::String CryOmni3DEngine_Egypt::startStoryModePrototype() {
 	        entryScene.c_str());
 	warning("Egypt: starting story mode through prototype entry scene %s", entryScene.c_str());
 	return entryScene;
+}
+
+Common::String CryOmni3DEngine_Egypt::startDebugLevel(int level, const Common::String &scene) {
+	clearPendingWarpRequest();
+	_pendingWarpTarget.clear();
+	_scriptVariables["FlagVisite"] = 0;
+	_scriptVariables["main"] = 0;
+	_scriptVariables["Level"] = level;
+	warning("EGYPT_MENU: selection=DebugLevel%d entryScene=%s", level, scene.c_str());
+	return scene;
 }
 
 Common::String CryOmni3DEngine_Egypt::startVisitMode() {

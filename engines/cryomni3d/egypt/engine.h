@@ -95,7 +95,13 @@ private:
 		kStory,
 		kVisit,
 		kDocumentation,
-		kQuit
+		kQuit,
+		kDebugLevel1,
+		kDebugLevel2,
+		kDebugLevel3,
+		kDebugLevel4,
+		kDebugLevel5,
+		kDebugLevel6
 	};
 
 	void setupSprites();
@@ -107,6 +113,7 @@ private:
 	EgyptStartupMode showMainMenu();
 	Common::String startStoryModePrototype();
 	Common::String startVisitMode();
+	Common::String startDebugLevel(int level, const Common::String &scene);
 	void startDocumentationMode();
 	void playStartupLogoIfPresent();
 	bool loadWrappedTgaSurface(const Common::Path &filename, Graphics::ManagedSurface &surface) const;
