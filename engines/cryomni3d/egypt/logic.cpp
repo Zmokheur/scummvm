@@ -277,49 +277,18 @@ void CryOmni3DEngine_Egypt::executeHnmSequence(const Common::String &hnmJoined) 
 	}
 }
 
-// ── Zone action dispatcher ────────────────────────────────────────────────────
 
-// Called when the player directly activates a zone (as opposed to the script
-// doing so via aller_warp / aller_hnm_warp).  Alpha/beta are the current view
-// angles at the moment of the click.
-void CryOmni3DEngine_Egypt::handleZoneAction(const EgyptZone &zone,
-                                              double alpha, double beta) {
-	switch (zone.actionId) {
-	case 9:  // ALLER_WARP
-		if (!zone.targetWarp.empty()) {
-			rememberPendingArrival(zone, zone.id, false, true, alpha, beta, "ALLER_WARP");
-			_pendingWarpTarget = resolvePrototypeWarpTarget(zone.targetWarp);
-		}
-		break;
+// ── Script timer ──────────────────────────────────────────────────────────────
 
-	case 10: // ALLER_HNM_WARP — sequence is played at the start of the next loadScene
-		if (!zone.targetWarp.empty()) {
-			rememberPendingArrival(zone, zone.id, true, true, alpha, beta, "ALLER_HNM_WARP");
-			_pendingWarpTarget = resolvePrototypeWarpTarget(zone.targetWarp);
-		}
-		break;
+void CryOmni3DEngine_Egypt::resetScriptTimer() {
+	_scriptTimerStartMs = g_system->getMillis();
+	_scriptVariables["timer"] = 0;
+	warning("Egypt: timer reset for scene %s", _currentScene.name.c_str());
+}
 
-	case 1:  // DIALOGUER
-		warning("Egypt: dialoguer zone %u label=%s [noop]", zone.id, zone.label.c_str());
-		break;
-
-	case 2:  // PRENDRE
-		warning("Egypt: prendre zone %u label=%s [noop]", zone.id, zone.label.c_str());
-		break;
-
-	case 5:  // UTILISER_SUR
-		warning("Egypt: utiliser_sur zone %u obj=%s target=%s [noop]",
-		        zone.id, zone.label.c_str(), zone.extraParam.c_str());
-		break;
-
-	case 6:  // ZONE — visual marker, action is handled through zoneactive in the script
-		break;
-
-	default:
-		warning("Egypt: unhandled action id %u on zone %u in %s",
-		        zone.actionId, zone.id, _currentScene.name.c_str());
-		break;
-	}
+void CryOmni3DEngine_Egypt::updateScriptTimer() {
+	const uint32 elapsed = g_system->getMillis() - _scriptTimerStartMs;
+	_scriptVariables["timer"] = (int)(elapsed / 10); // centièmes de seconde
 }
 
 } // End of namespace Egypt

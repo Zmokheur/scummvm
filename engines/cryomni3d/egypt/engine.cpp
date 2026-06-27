@@ -230,6 +230,7 @@ void CryOmni3DEngine_Egypt::loadScene(const Common::String &sceneName) {
 	warning("Egypt: scene %s uses warp %s and has %u zone(s)",
 	        _currentScene.name.c_str(), _currentScene.warpName.c_str(), _currentScene.zones.size());
 	_currentSceneAssets = detectSceneAssets(sceneName, getScriptVariableValue("Level"));
+	resetScriptTimer();
 	runSceneStartup();
 	displayCurrentWarpPreview(warpPath);
 }

@@ -47,6 +47,7 @@ void CryOmni3DEngine_Egypt::parseSceneDefinition(const Common::Path &filename, c
 	_currentScene.hasEndInit = false;
 	_currentScene.hasEndWarp = false;
 	_currentCentrages.clear();
+	_sceneHasTimerScript = false;
 
 	while (!file.eos()) {
 		Common::String line = file.readLine();
@@ -113,6 +114,12 @@ void CryOmni3DEngine_Egypt::parseSceneDefinition(const Common::Path &filename, c
 			_currentScene.hasEndWarp = true;
 
 		_currentScene.scriptLines.push_back(line);
+		if (!_sceneHasTimerScript) {
+			Common::String lower = line;
+			lower.toLowercase();
+			if (lower.find("timer") != Common::String::npos)
+				_sceneHasTimerScript = true;
+		}
 		if (line.hasPrefixIgnoreCase("centrage ")) {
 			Common::String spec = line.substr(9);
 			spec.trim();

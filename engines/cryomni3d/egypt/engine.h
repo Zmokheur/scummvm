@@ -195,7 +195,8 @@ private:
 	void autoActivateZoneclicZones();
 	void runSceneStartup();
 	void executeHnmSequence(const Common::String &hnmJoined);
-	void handleZoneAction(const EgyptZone &zone, double alpha, double beta);
+	void resetScriptTimer();
+	void updateScriptTimer();
 
 	EgyptScene _currentScene;
 	Common::HashMap<Common::String, int, Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo> _scriptVariables;
@@ -225,6 +226,8 @@ private:
 	bool _documentationDataLoaded = false;
 	uint _lastHoveredZoneId;
 	Common::Array<EgyptSceneAsset> _currentSceneAssets;
+	uint32 _scriptTimerStartMs = 0;
+	bool   _sceneHasTimerScript = false;
 };
 
 } // End of namespace Egypt

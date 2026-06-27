@@ -354,6 +354,14 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpFixed(const Graphics::Surface *fra
 
 	bool exitView = false;
 	while (!shouldAbort() && !exitView) {
+		if (_sceneHasTimerScript) {
+			updateScriptTimer();
+			runEndInit(0);
+			if (!_pendingWarpTarget.empty()) {
+				exitView = true;
+				break;
+			}
+		}
 		pollEvents();
 
 		const Common::Point mouse = getMousePos();
@@ -538,6 +546,14 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpRotation(const Graphics::Surface *
 	bool exitRotation = false;
 	bool firstDraw    = true;
 	while (!shouldAbort() && !exitRotation) {
+		if (_sceneHasTimerScript) {
+			updateScriptTimer();
+			runEndInit(0);
+			if (!_pendingWarpTarget.empty()) {
+				exitRotation = true;
+				break;
+			}
+		}
 		pollEvents();
 
 		Common::Point mouse = getMousePos();

@@ -189,9 +189,23 @@ bool CryOmni3DEngine_Egypt::executeScriptCommand(const Common::String &rawLine,
 		value.trim();
 		if (value.hasSuffix("!"))
 			value.deleteLastChar();
-		if (queuePrototypeSceneChange((uint)atoi(value.c_str()), "aller_hnm_warp", zoneClick, true,
-		                              sourceAlpha, sourceBeta)) {
+		const uint hnmZoneId = (uint)atoi(value.c_str());
+		const EgyptZone *hnmZone = findZoneById(hnmZoneId);
+		if (hnmZone && hnmZone->targetWarp.equalsIgnoreCase("NULL")) {
+			// Play HNM sequence in-place, stay on current scene
+			Common::String joined;
+			for (uint si = 0; si < hnmZone->hnmSequence.size(); ++si) {
+				if (si > 0) joined += "/";
+				joined += hnmZone->hnmSequence[si];
+			}
+			if (!joined.empty())
+				executeHnmSequence(joined);
 			producedState = true;
+		} else {
+			if (queuePrototypeSceneChange(hnmZoneId, "aller_hnm_warp", zoneClick, true,
+			                              sourceAlpha, sourceBeta)) {
+				producedState = true;
+			}
 		}
 		return true;
 	}
@@ -389,6 +403,8 @@ void CryOmni3DEngine_Egypt::setScriptVariable(const Common::String &assignment) 
 
 	_scriptVariables[name] = result;
 	warning("Egypt: script variable %s=%d", name.c_str(), _scriptVariables[name]);
+	if (name.equalsIgnoreCase("Level"))
+		resetScriptTimer();
 }
 
 bool CryOmni3DEngine_Egypt::executePrototypeSceneLogic() {
