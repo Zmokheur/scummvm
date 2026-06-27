@@ -804,105 +804,228 @@ void CryOmni3DEngine_Egypt::startDocumentationMode() {
 	clearKeys();
 	waitMouseRelease();
 
-	int selectedTheme = 0;
+	// Layout positions (estimated from original screenshot, 640x480)
+	static const int kThemeTextX = 80;
+	static const int kThemeTextY[kEgyptDocumentationThemeCount] = { 38, 92, 145, 198, 252, 306 };
+	static const int kMidX      = 234;
+	static const int kMidYStart = 55;
+	static const int kMidSpacing = 22;
+	static const int kRightX      = 322;
+	static const int kRightYStart = 55;
+	static const int kRightSpacing = 22;
+
+	int selectedTheme   = -1;
+	int hoveredTheme    = -1;
+	int selectedMidId   = -1;
+	int hoveredMidIdx   = -1;
+	int hoveredRightIdx = -1;
+	int openTargetId    = -1;
+
 	bool exitDocumentation = false;
 	while (!shouldAbort() && !exitDocumentation) {
+		// Static theme hit boxes (icon + label area, left column)
 		Common::Rect themeBoxes[kEgyptDocumentationThemeCount];
-		int y = 254;
-		for (int i = 0; i < kEgyptDocumentationThemeCount; ++i, y += 32)
-			themeBoxes[i] = Common::Rect(100, y - 2, 540, y + 22);
+		for (int i = 0; i < kEgyptDocumentationThemeCount; ++i)
+			themeBoxes[i] = Common::Rect(20, kThemeTextY[i] - 10, 210, kThemeTextY[i] + 20);
 
-		const Graphics::Font *titleFont = FontMan.getFontByUsage(Graphics::FontManager::kBigGUIFont);
-		const Graphics::Font *bodyFont = FontMan.getFontByUsage(Graphics::FontManager::kGUIFont);
-		if (!titleFont)
-			titleFont = bodyFont;
+		// Prefer the smaller console font; fall back to GUI font if unavailable
+		const Graphics::Font *bodyFont = FontMan.getFontByUsage(Graphics::FontManager::kConsoleFont);
 		if (!bodyFont)
-			bodyFont = titleFont;
+			bodyFont = FontMan.getFontByUsage(Graphics::FontManager::kGUIFont);
 		if (!bodyFont) {
 			exitDocumentation = true;
 			break;
 		}
 
-		bool openTheme = false;
+		bool openTheme    = false;
 		bool redrawSummary = true;
+
 		while (!shouldAbort() && !exitDocumentation && !openTheme) {
+			// Recompute dynamic children lists from current selection each iteration
+			Common::Array<int> midChildren;
+			if (selectedTheme >= 0) {
+				Common::HashMap<int, Common::Array<int> >::const_iterator it =
+				        _documentationTree.find(kEgyptDocumentationThemeIds[selectedTheme]);
+				if (it != _documentationTree.end())
+					midChildren = it->_value;
+			}
+
+			Common::Array<int> rightChildren;
+			if (selectedMidId >= 0) {
+				Common::HashMap<int, Common::Array<int> >::const_iterator it =
+				        _documentationTree.find(selectedMidId);
+				if (it != _documentationTree.end())
+					rightChildren = it->_value;
+			}
+
+			// Rebuild dynamic hit boxes from current children
+			// Mid column extends to full width when right column is absent
+			const int midBoxRight = rightChildren.empty() ? 635 : (kRightX - 4);
+			Common::Array<Common::Rect> midBoxes;
+			for (uint j = 0; j < midChildren.size(); ++j) {
+				const int y = kMidYStart + (int)j * kMidSpacing;
+				midBoxes.push_back(Common::Rect(kMidX - 4, y - 2, midBoxRight, y + 18));
+			}
+
+			Common::Array<Common::Rect> rightBoxes;
+			for (uint k = 0; k < rightChildren.size(); ++k) {
+				const int y = kRightYStart + (int)k * kRightSpacing;
+				rightBoxes.push_back(Common::Rect(kRightX - 4, y - 2, 635, y + 18));
+			}
+
 			if (redrawSummary) {
 				Graphics::ManagedSurface summarySurface(640, 480, g_system->getScreenFormat());
 				if (hasSummaryBackground)
 					summarySurface.blitFrom(summaryBackground);
-				else if (hasViewerBackground)
-					summarySurface.blitFrom(viewerBackground);
 				else
 					summarySurface.clear(summarySurface.format.RGBToColor(0, 0, 0));
 
-				const uint32 panelColor = summarySurface.format.RGBToColor(14, 16, 22);
-				const uint32 borderColor = summarySurface.format.RGBToColor(172, 130, 52);
-				const uint32 titleColor = summarySurface.format.RGBToColor(245, 219, 160);
-				const uint32 textColor = summarySurface.format.RGBToColor(242, 235, 218);
-				const uint32 selectedColor = summarySurface.format.RGBToColor(255, 220, 98);
-				const uint32 hintColor = summarySurface.format.RGBToColor(182, 182, 182);
-				const Common::Rect panel(54, 186, 586, 440);
-				summarySurface.fillRect(panel, panelColor);
-				summarySurface.frameRect(panel, borderColor);
+				const uint32 normalColor = summarySurface.format.RGBToColor(242, 232, 210);
+				const uint32 activeColor = summarySurface.format.RGBToColor(255, 180, 60);
 
-				drawCenteredLine(summarySurface, titleFont, "Espace documentaire", 206, titleColor);
+				const int fontH = bodyFont->getFontHeight();
 
-				int drawY = 254;
-				for (int i = 0; i < kEgyptDocumentationThemeCount; ++i, drawY += 32) {
-					const uint32 color = i == selectedTheme ? selectedColor : textColor;
-					Common::String line = Common::String::format("[%d] %s", i + 1, kEgyptDocumentationThemeLabels[i]);
-					bodyFont->drawString(&summarySurface, line, 112, drawY, 400, color);
+				// Left column: theme labels — vertically centered within each icon slot
+				for (int i = 0; i < kEgyptDocumentationThemeCount; ++i) {
+					const bool active = (i == hoveredTheme || i == selectedTheme);
+					const int textY = kThemeTextY[i] - fontH / 2;
+					bodyFont->drawString(&summarySurface, kEgyptDocumentationThemeLabels[i],
+					                     kThemeTextX, textY, 150,
+					                     active ? activeColor : normalColor);
 				}
 
-				drawCenteredLine(summarySurface, bodyFont,
-				                 "Fleches: choisir  Entree: ouvrir  Echap: retour menu",
-				                 408, hintColor);
+				// Middle column width: full when right column is absent, narrow otherwise
+				const int midWidth = rightChildren.empty() ? (634 - kMidX) : (kRightX - 4 - kMidX);
 
-				g_system->copyRectToScreen(summarySurface.getPixels(), summarySurface.pitch, 0, 0, summarySurface.w, summarySurface.h);
+				// Middle column: direct children of selected theme
+				for (uint j = 0; j < midChildren.size(); ++j) {
+					const EgyptDocumentationRecord *rec =
+					        findDocumentationRecord(_documentationRecords, midChildren[j]);
+					if (!rec)
+						continue;
+					const bool active = ((int)j == hoveredMidIdx || midChildren[j] == selectedMidId);
+					const int y = kMidYStart + (int)j * kMidSpacing;
+					bodyFont->drawString(&summarySurface, rec->title,
+					                     kMidX, y, midWidth, active ? activeColor : normalColor);
+				}
+
+				// Right column: children of selected mid node
+				for (uint k = 0; k < rightChildren.size(); ++k) {
+					const EgyptDocumentationRecord *rec =
+					        findDocumentationRecord(_documentationRecords, rightChildren[k]);
+					if (!rec)
+						continue;
+					const bool active = ((int)k == hoveredRightIdx);
+					const int y = kRightYStart + (int)k * kRightSpacing;
+					bodyFont->drawString(&summarySurface, rec->title,
+					                     kRightX, y, 634 - kRightX, active ? activeColor : normalColor);
+				}
+
+				g_system->copyRectToScreen(summarySurface.getPixels(), summarySurface.pitch,
+				                           0, 0, summarySurface.w, summarySurface.h);
 				g_system->updateScreen();
 				redrawSummary = false;
 			}
 
 			pollEvents();
 			const Common::Point mouse = getMousePos();
+
+			// Hover detection across all three columns
+			int newHoveredTheme = -1;
 			for (int i = 0; i < kEgyptDocumentationThemeCount; ++i) {
-				if (themeBoxes[i].contains(mouse) && selectedTheme != i) {
-					selectedTheme = i;
-					redrawSummary = true;
+				if (themeBoxes[i].contains(mouse)) {
+					newHoveredTheme = i;
 					break;
 				}
 			}
+
+			int newHoveredMidIdx = -1;
+			for (uint j = 0; j < midBoxes.size(); ++j) {
+				if (midBoxes[j].contains(mouse)) {
+					newHoveredMidIdx = (int)j;
+					break;
+				}
+			}
+
+			int newHoveredRightIdx = -1;
+			for (uint k = 0; k < rightBoxes.size(); ++k) {
+				if (rightBoxes[k].contains(mouse)) {
+					newHoveredRightIdx = (int)k;
+					break;
+				}
+			}
+
+			if (newHoveredTheme != hoveredTheme || newHoveredMidIdx != hoveredMidIdx ||
+			    newHoveredRightIdx != hoveredRightIdx) {
+				hoveredTheme    = newHoveredTheme;
+				hoveredMidIdx   = newHoveredMidIdx;
+				hoveredRightIdx = newHoveredRightIdx;
+				redrawSummary   = true;
+			}
+
 			if (redrawSummary)
-				break;
+				continue;
 
 			if (getCurrentMouseButton() == 1) {
-				for (int i = 0; i < kEgyptDocumentationThemeCount; ++i) {
+				bool handled = false;
+
+				// Left column: select theme, reset mid selection
+				for (int i = 0; i < kEgyptDocumentationThemeCount && !handled; ++i) {
 					if (themeBoxes[i].contains(mouse)) {
-						selectedTheme = i;
-						openTheme = true;
+						if (selectedTheme != i) {
+							selectedTheme   = i;
+							selectedMidId   = -1;
+							hoveredMidIdx   = -1;
+							hoveredRightIdx = -1;
+						}
 						waitMouseRelease();
-						break;
+						redrawSummary = true;
+						handled = true;
+					}
+				}
+
+				// Middle column: drill into sub-category or open leaf article
+				for (uint j = 0; j < midBoxes.size() && !handled; ++j) {
+					if (midBoxes[j].contains(mouse)) {
+						const int childId = midChildren[j];
+						const bool hasSub =
+						        _documentationTree.find(childId) != _documentationTree.end();
+						if (hasSub) {
+							selectedMidId   = childId;
+							hoveredRightIdx = -1;
+							redrawSummary   = true;
+						} else {
+							openTargetId = childId;
+							openTheme    = true;
+						}
+						waitMouseRelease();
+						handled = true;
+					}
+				}
+
+				// Right column: drill deeper if node has children, else open article
+				for (uint k = 0; k < rightBoxes.size() && !handled; ++k) {
+					if (rightBoxes[k].contains(mouse)) {
+						const int childId = rightChildren[k];
+						const bool hasSub =
+						        _documentationTree.find(childId) != _documentationTree.end();
+						if (hasSub) {
+							selectedMidId   = childId;
+							hoveredRightIdx = -1;
+							redrawSummary   = true;
+						} else {
+							openTargetId = childId;
+							openTheme    = true;
+						}
+						waitMouseRelease();
+						handled = true;
 					}
 				}
 			}
 
 			const Common::KeyCode keycode = getNextKey().keycode;
-			if (keycode == Common::KEYCODE_ESCAPE) {
+			if (keycode == Common::KEYCODE_ESCAPE)
 				exitDocumentation = true;
-				break;
-			} else if (keycode == Common::KEYCODE_UP) {
-				selectedTheme = (selectedTheme + kEgyptDocumentationThemeCount - 1) % kEgyptDocumentationThemeCount;
-				redrawSummary = true;
-			} else if (keycode == Common::KEYCODE_DOWN) {
-				selectedTheme = (selectedTheme + 1) % kEgyptDocumentationThemeCount;
-				redrawSummary = true;
-			} else if ((keycode >= Common::KEYCODE_1 && keycode <= Common::KEYCODE_6) ||
-			           (keycode >= Common::KEYCODE_KP1 && keycode <= Common::KEYCODE_KP6)) {
-				selectedTheme = keycode >= Common::KEYCODE_KP1 ? keycode - Common::KEYCODE_KP1 : keycode - Common::KEYCODE_1;
-				openTheme = true;
-			} else if (keycode == Common::KEYCODE_RETURN || keycode == Common::KEYCODE_SPACE) {
-				openTheme = true;
-			}
 
 			g_system->updateScreen();
 			g_system->delayMillis(10);
@@ -910,21 +1033,14 @@ void CryOmni3DEngine_Egypt::startDocumentationMode() {
 
 		if (exitDocumentation)
 			break;
-		if (redrawSummary)
-			continue;
 		if (!openTheme)
 			break;
 
-		Common::Array<int> themeRecords;
-		collectDocumentationLeafRecords(_documentationRecords, _documentationTree,
-		                                kEgyptDocumentationThemeIds[selectedTheme], themeRecords);
-		if (themeRecords.empty()) {
-			warning("EGYPT_MENU: documentation_theme=%d label=%s has no record",
-			        kEgyptDocumentationThemeIds[selectedTheme], kEgyptDocumentationThemeLabels[selectedTheme]);
-			continue;
-		}
-
-		displayDocumentationById(themeRecords[0]);
+		hoveredTheme    = -1;
+		hoveredMidIdx   = -1;
+		hoveredRightIdx = -1;
+		displayDocumentationById(openTargetId);
+		openTargetId = -1;
 	}
 
 	clearKeys();
