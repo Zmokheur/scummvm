@@ -25,12 +25,14 @@
 #include "common/array.h"
 #include "common/fs.h"
 #include "common/hash-str.h"
+#include "common/hashmap.h"
 #include "common/str.h"
 
 #include "graphics/surface.h"
 
 #include "cryomni3d/cryomni3d.h"
 #include "cryomni3d/egypt/cursor.h"
+#include "cryomni3d/egypt/dialogue.h"
 #include "cryomni3d/egypt/scene.h"
 #include "cryomni3d/egypt/warp.h"
 
@@ -187,6 +189,18 @@ private:
 	void decodeOverlayFrame(uint frameIndex);
 	void applyOverlayToSurface(Graphics::Surface &surface) const;
 
+	// dialogue.cpp — Level.txt dialogue system
+	bool loadLevelTxt();
+	const EgyptDialogNode *findDialogNode(const Common::String &label) const;
+	EgyptDialogResult executeDialogNode(const Common::String &label,
+	                                    Common::String &outText,
+	                                    Common::Array<EgyptDialogChoice> &outChoices,
+	                                    Common::String &outNextLabel);
+	void showDialogText(const Graphics::ManagedSurface &background, const Common::String &text);
+	int  showDialogChoices(const Graphics::ManagedSurface &background,
+	                       const Common::Array<EgyptDialogChoice> &choices);
+	void runDialogue(const Common::String &startLabel);
+
 	// logic.cpp — scene lifecycle
 	Common::Array<EgyptSceneAsset> detectSceneAssets(const Common::String &sceneName, int level) const;
 	Common::Array<Common::String>  extractScriptBlock(const Common::String &fromMarker,
@@ -233,6 +247,12 @@ private:
 	bool   _sceneHasTimerScript = false;
 	Graphics::Surface _crossFadeOldScreen;
 	bool _hasCrossFadeOldScreen = false;
+
+	// Dialogue system (dialogue.cpp)
+	Common::HashMap<Common::String, EgyptDialogNode,
+	                Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo> _dialogueNodes;
+	bool _dialogueLevelLoaded = false;
+	Common::String _dialoguePendingLabel;
 };
 
 } // End of namespace Egypt

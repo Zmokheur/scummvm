@@ -268,8 +268,35 @@ bool CryOmni3DEngine_Egypt::executeScriptCommand(const Common::String &rawLine,
 		return true;
 	}
 
+	if (line.hasPrefixIgnoreCase("dialoguer ")) {
+		Common::String numStr = line.substr(10);
+		numStr.trim();
+		const uint zoneId = (uint)atoi(numStr.c_str());
+		const EgyptZone *dlgZone = findZoneById(zoneId);
+		if (dlgZone && dlgZone->commandName.equalsIgnoreCase("DIALOGUER")) {
+			// Zone arg format: NAME-DIAL-LABEL (e.g. MONTOUMES-DIAL-SMT0001)
+			// Extract the portion after the second dash.
+			const Common::String &arg = dlgZone->label;
+			int firstDash = arg.find('-');
+			if (firstDash >= 0) {
+				int secondDash = arg.find('-', firstDash + 1);
+				if (secondDash >= 0) {
+					_dialoguePendingLabel = arg.substr(secondDash + 1);
+					if (_dialoguePendingLabel.hasSuffix("!"))
+						_dialoguePendingLabel.deleteLastChar();
+					_dialoguePendingLabel.toLowercase();
+					warning("Egypt: dialoguer %u → label '%s'",
+					        zoneId, _dialoguePendingLabel.c_str());
+				}
+			}
+		} else {
+			warning("Egypt: dialoguer %u — zone not found or not DIALOGUER", zoneId);
+		}
+		return true;
+	}
+
 	static const char *const kSafeNoopPrefixes[] = {
-		"music", "stopmusic", "sound", "sounds", "bmouse", "dialoguer",
+		"music", "stopmusic", "sound", "sounds", "bmouse",
 		"show", "hide", "son_3d", "inventaire", "and"
 	};
 	for (uint i = 0; i < ARRAYSIZE(kSafeNoopPrefixes); ++i) {
@@ -387,18 +414,19 @@ int CryOmni3DEngine_Egypt::getScriptVariableValue(const Common::String &name) co
 }
 
 void CryOmni3DEngine_Egypt::setScriptVariable(const Common::String &assignment) {
+	struct OpEntry { const char *sym; int len; };
+	static const OpEntry kOps[] = {
+		{ "+=", 2 }, { "-=", 2 }, { "*=", 2 }, { "/=", 2 }, { "=", 1 }
+	};
+
 	Common::String op;
-	int separatorPos = assignment.find("+=");
-	if (separatorPos >= 0) {
-		op = "+=";
-	} else {
-		separatorPos = assignment.find("-=");
-		if (separatorPos >= 0) {
-			op = "-=";
-		} else {
-			separatorPos = assignment.find('=');
-			if (separatorPos >= 0)
-				op = "=";
+	int separatorPos = -1;
+	for (uint oi = 0; oi < ARRAYSIZE(kOps); ++oi) {
+		int pos = assignment.find(kOps[oi].sym);
+		if (pos >= 0) {
+			op = kOps[oi].sym;
+			separatorPos = pos;
+			break;
 		}
 	}
 
@@ -410,11 +438,18 @@ void CryOmni3DEngine_Egypt::setScriptVariable(const Common::String &assignment) 
 	name.trim();
 	value.trim();
 
-	int result = resolveScriptValue(value);
+	int rhs = resolveScriptValue(value);
+	int result;
 	if (op == "+=")
-		result = getScriptVariableValue(name) + result;
+		result = getScriptVariableValue(name) + rhs;
 	else if (op == "-=")
-		result = getScriptVariableValue(name) - result;
+		result = getScriptVariableValue(name) - rhs;
+	else if (op == "*=")
+		result = getScriptVariableValue(name) * rhs;
+	else if (op == "/=")
+		result = (rhs != 0) ? getScriptVariableValue(name) / rhs : 0;
+	else
+		result = rhs;
 
 	_scriptVariables[name] = result;
 	warning("Egypt: script variable %s=%d", name.c_str(), _scriptVariables[name]);
@@ -459,7 +494,7 @@ void CryOmni3DEngine_Egypt::logScriptLine(const Common::String &line) const {
 	    line.hasPrefixIgnoreCase("stopmusic") || line.hasPrefixIgnoreCase("if ") ||
 	    line.hasPrefixIgnoreCase("let ") || line.hasPrefixIgnoreCase("goto ") ||
 	    line.hasPrefixIgnoreCase("aller_warp") || line.hasPrefixIgnoreCase("aller_hnm_warp") ||
-	    line.hasPrefixIgnoreCase("dialoguer") || line.hasPrefixIgnoreCase("zoneactive") ||
+	    line.hasPrefixIgnoreCase("dialoguer ") || line.hasPrefixIgnoreCase("zoneactive") ||
 	    line.hasPrefixIgnoreCase("zoneinactive")) {
 		warning("Egypt: script %s", line.c_str());
 	}

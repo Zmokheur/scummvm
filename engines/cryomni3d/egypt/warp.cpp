@@ -84,7 +84,36 @@ bool CryOmni3DEngine_Egypt::handleWarpClick(const Common::Point &mousePos, const
 		}
 
 		_pendingWarpTarget.clear();
+		_dialoguePendingLabel.clear();
 		runEndInit(zoneClick);
+
+		// Dialogue requested by the script (via "dialoguer N" command in endinit).
+		if (!_dialoguePendingLabel.empty()) {
+			Common::String dlgLabel = _dialoguePendingLabel;
+			_dialoguePendingLabel.clear();
+			runDialogue(dlgLabel);
+			return false;
+		}
+
+		// Direct DIALOGUER zone action (actionId=1, commandName="DIALOGUER").
+		// Handled like documentation zones: bypass warp, trigger dialogue directly.
+		if (zone->commandName.equalsIgnoreCase("DIALOGUER") && !zone->label.empty()) {
+			Common::String arg = zone->label; // e.g. "MONTOUMES-DIAL-SMT0009!"
+			uint firstDash  = arg.find('-');
+			uint secondDash = (firstDash != Common::String::npos)
+			                  ? arg.find('-', firstDash + 1)
+			                  : Common::String::npos;
+			if (secondDash != Common::String::npos) {
+				Common::String label = arg.substr(secondDash + 1);
+				if (label.hasSuffix("!"))
+					label.deleteLastChar();
+				label.toLowercase();
+				warning("Egypt: DIALOGUER zone %03u → label '%s'", zone->id, label.c_str());
+				runDialogue(label);
+			}
+			return false;
+		}
+
 		if (_pendingWarpTarget.empty() && shouldUseDirectWarpFallback(*zone, zoneClick) &&
 		    zone->commandName.equalsIgnoreCase("ALLER_WARP") &&
 		    !zone->targetWarp.empty()) {
