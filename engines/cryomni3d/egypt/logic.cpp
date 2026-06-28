@@ -441,7 +441,8 @@ void CryOmni3DEngine_Egypt::executeHnmSequence(const Common::String &hnmJoined) 
 			}
 		}
 
-		playHnmFile(path);
+		// Use HNMDecoder (audio) with the VBL speed from the file header (timing).
+		playHnmWithSpeed(path);
 	}
 }
 

@@ -387,17 +387,26 @@ void CryOmni3DEngine_Egypt::drawMenuScreen(Graphics::ManagedSurface &surface, in
 }
 
 void CryOmni3DEngine_Egypt::playStartupLogoIfPresent() {
-	const Common::Path logoPath("HNM/LOGO.HNS");
-	if (!Common::File::exists(logoPath)) {
-		warning("EGYPT_MENU: logo=missing path=%s",
-		        logoPath.toString(Common::Path::kNativeSeparator).c_str());
-		return;
+	// EXE 0x4075fe: hardcoded startup sequence "logo" then "r1".
+	// R1.HNS is HNM6 640x480 with embedded CRYO_APC audio in AA chunk (22050 Hz stereo).
+	// Path resolution: HNM/<name>.HNS → HNM/FR/<name>.HNS.
+	static const char *const kStartupEntries[] = { "logo", "r1" };
+	for (uint i = 0; i < ARRAYSIZE(kStartupEntries); ++i) {
+		if (shouldAbort())
+			break;
+		Common::Path path(Common::String::format("HNM/%s.HNS", kStartupEntries[i]));
+		if (!Common::File::exists(path)) {
+			path = Common::Path(Common::String::format("HNM/FR/%s.HNS", kStartupEntries[i]));
+			if (!Common::File::exists(path)) {
+				warning("Egypt: startup HNS '%s' not found in HNM/ or HNM/FR/", kStartupEntries[i]);
+				continue;
+			}
+		}
+		warning("Egypt: startup: playing %s", path.toString(Common::Path::kNativeSeparator).c_str());
+		playHNM(path, Audio::Mixer::kMusicSoundType);
+		clearKeys();
+		waitMouseRelease();
 	}
-
-	warning("EGYPT_MENU: logo=HNM/LOGO.HNS status=likely");
-	playHNM(logoPath, Audio::Mixer::kMusicSoundType);
-	clearKeys();
-	waitMouseRelease();
 }
 
 CryOmni3DEngine_Egypt::EgyptStartupMode CryOmni3DEngine_Egypt::showMainMenu() {

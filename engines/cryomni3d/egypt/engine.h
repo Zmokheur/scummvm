@@ -381,7 +381,7 @@ private:
 	void setupSprites();
 	bool loadInterfaceSprites(const Common::Path &filename);
 
-	void playHnmFile(const Common::Path &path);
+	void playHnmWithSpeed(const Common::Path &path);
 	bool loadSymbolDefinitions(const Common::Path &filename);
 	bool setInterfaceCursor(uint spriteId) const;
 	EgyptStartupMode showMainMenu();
