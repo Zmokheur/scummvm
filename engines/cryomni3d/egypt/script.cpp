@@ -244,6 +244,15 @@ bool CryOmni3DEngine_Egypt::executeScriptCommand(const Common::String &rawLine,
 		return true;
 	}
 
+	if (line.equalsIgnoreCase("decompress")) {
+		// Reset the panorama to the clean decoded WARP/HNM state, without any
+		// animspr overlays. The script then redraws only the sprites still needed.
+		_sceneSprPixels.clear();
+		_sceneSprDirty = true;
+		warning("Egypt: decompress — panorama reset");
+		return true;
+	}
+
 	if (line.hasPrefixIgnoreCase("animspr ")) {
 		Common::String args = line.substr(8);
 		args.trim();
@@ -531,7 +540,8 @@ void CryOmni3DEngine_Egypt::logUnsupportedScriptCommand(const Common::String &li
 
 void CryOmni3DEngine_Egypt::logScriptLine(const Common::String &line) const {
 	if (line.equalsIgnoreCase("warpinit") || line.equalsIgnoreCase("endwarp") ||
-	    line.equalsIgnoreCase("endinit") || line.hasSuffix(":") ||
+	    line.equalsIgnoreCase("endinit") || line.equalsIgnoreCase("decompress") ||
+	    line.hasSuffix(":") ||
 	    line.hasPrefixIgnoreCase("centrage") || line.hasPrefixIgnoreCase("music") ||
 	    line.hasPrefixIgnoreCase("stopmusic") || line.hasPrefixIgnoreCase("if ") ||
 	    line.hasPrefixIgnoreCase("let ") || line.hasPrefixIgnoreCase("goto ") ||
