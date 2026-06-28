@@ -640,6 +640,10 @@ void CryOmni3DEngine_Egypt::showDialogText(const Graphics::ManagedSurface &backg
 	// Si pas de voix, on attend le clic du joueur.
 	const bool voiceStarted = _mixer->isSoundHandleActive(_dlgVoiceHandle);
 
+	// Consume any click that triggered this dialog so the loop doesn't
+	// immediately treat it as a "skip text" input.
+	waitMouseRelease();
+
 	// Working surface: full-screen, kept in sync with background + overlay each frame.
 	Graphics::ManagedSurface surface(640, 480, fmt);
 
