@@ -119,10 +119,26 @@ Common::Error CryOmni3DEngine_Egypt::run() {
 		}
 
 		while (!shouldAbort() && !sceneName.empty()) {
+			// Remember whether this scene is the eye-warp destination
+			// so we know whether to consume the return scene on exit.
+			const bool isEyeScene = !_pendingReturnScene.empty();
+
 			loadScene(sceneName);
-			if (_pendingWarpTarget.empty())
+
+			if (!_pendingWarpTarget.empty()) {
+				// Navigation from inside this scene (zone click, script, toolbar F-key…).
+				// If we were inside an eye scene and the eye scene itself navigated
+				// somewhere, discard the return: we follow the new navigation.
+				if (isEyeScene)
+					_pendingReturnScene.clear();
+				sceneName = _pendingWarpTarget;
+			} else if (!_pendingReturnScene.empty()) {
+				// Eye-warp scene ended without further navigation → return to origin.
+				sceneName = _pendingReturnScene;
+				_pendingReturnScene.clear();
+			} else {
 				break;
-			sceneName = _pendingWarpTarget;
+			}
 		}
 	}
 
@@ -193,6 +209,11 @@ Common::Path CryOmni3DEngine_Egypt::resolveSceneDefinitionPath(const Common::Str
 }
 
 void CryOmni3DEngine_Egypt::loadScene(const Common::String &sceneName) {
+	// DEF zone targets (WARP:ALL\LETTRE etc.) use Windows backslashes.
+	// Normalise to forward slashes before any path construction.
+	Common::String scene = sceneName;
+	scene.replace('\\', '/');
+
 	_pendingWarpTarget.clear();
 	_lastHoveredZoneId = uint(-1);
 	_pendingRuntimeArrivalPrepared = false;
@@ -205,17 +226,18 @@ void CryOmni3DEngine_Egypt::loadScene(const Common::String &sceneName) {
 	_overlayDirty = false;
 	_sceneSprPixels.clear();
 	_sceneSprDirty = false;
+	_autoActivationZones.clear();
 
 	if (_pendingWarp.viaHnm && !_pendingWarp.hnmName.empty())
 		executeHnmSequence(_pendingWarp.hnmName);
 
-	Common::Path scenePath = resolveSceneDefinitionPath(sceneName);
-	parseSceneDefinition(scenePath, sceneName);
+	Common::Path scenePath = resolveSceneDefinitionPath(scene);
+	parseSceneDefinition(scenePath, scene);
 
 	if (!_pendingWarp.toContext.empty())
 		_currentContextName = _pendingWarp.toContext;
-	else if (isEgyptContextName(sceneName))
-		_currentContextName = sceneName;
+	else if (isEgyptContextName(scene))
+		_currentContextName = scene;
 
 	_currentScene.contextName = _currentContextName;
 	warning("Egypt: current context for %s is %s",
@@ -233,12 +255,23 @@ void CryOmni3DEngine_Egypt::loadScene(const Common::String &sceneName) {
 
 	warning("Egypt: scene %s uses warp %s and has %u zone(s)",
 	        _currentScene.name.c_str(), _currentScene.warpName.c_str(), _currentScene.zones.size());
-	_currentSceneAssets = detectSceneAssets(sceneName, getScriptVariableValue("Level"));
+	_currentSceneAssets = detectSceneAssets(scene, getScriptVariableValue("Level"));
 	resetScriptTimer();
+
+	// Snapshot main before warpinit runs; restore it immediately after.
+	// In the EXE the held object lives outside the script-variable table, so
+	// eye-scene scripts that do "let main=0" cannot affect it.  We replicate
+	// this only for eye scenes (identified by _pendingReturnScene being set).
+	const int mainBeforeInit = (!_pendingReturnScene.empty()) ? getScriptVariableValue("main") : 0;
+
 	runSceneStartup();
 
+	if (mainBeforeInit != 0)
+		_scriptVariables["main"] = mainBeforeInit;
+
 	_hasCrossFadeOldScreen = false;
-	if (_pendingWarp.active) {
+	// WARP:OLD returns to the eye-warp origin scene: no cross-fade (EXE behaviour).
+	if (_pendingWarp.active && !_pendingWarp.toScene.equalsIgnoreCase("OLD")) {
 		Graphics::Surface *screen = g_system->lockScreen();
 		if (screen) {
 			_crossFadeOldScreen.free();

@@ -26,42 +26,6 @@
 namespace CryOmni3D {
 namespace Egypt {
 
-namespace {
-
-bool scriptLineReferencesZoneclic(const Common::String &compactLine, uint zoneClick) {
-	const char *line = compactLine.c_str();
-	const char *needle = "zoneclic";
-	const size_t needleLen = strlen(needle);
-
-	for (const char *pos = strstr(line, needle); pos; pos = strstr(pos + needleLen, needle)) {
-		const char *cursor = pos + needleLen;
-		if (*cursor == '!' && *(cursor + 1) == '=')
-			cursor += 2;
-		else if (*cursor == '>' && *(cursor + 1) == '=')
-			cursor += 2;
-		else if (*cursor == '<' && *(cursor + 1) == '=')
-			cursor += 2;
-		else if (*cursor == '=' || *cursor == '>' || *cursor == '<')
-			cursor += 1;
-		else
-			continue;
-
-		if (!(*cursor >= '0' && *cursor <= '9'))
-			continue;
-
-		char *endPtr = nullptr;
-		const long referencedZoneclic = strtol(cursor, &endPtr, 10);
-		if (endPtr == cursor)
-			continue;
-
-		if ((uint)referencedZoneclic == zoneClick)
-			return true;
-	}
-
-	return false;
-}
-
-} // End of anonymous namespace
 
 bool isEgyptContextName(const Common::String &name) {
 	return name.hasPrefixIgnoreCase("JOUR") || name.hasPrefixIgnoreCase("NUIT");
@@ -71,12 +35,77 @@ bool CryOmni3DEngine_Egypt::handleWarpClick(const Common::Point &mousePos, const
                                             double currentAlpha, double currentBeta) {
 	const EgyptZone *zone = findInteractiveZone(warpPoint);
 	if (zone) {
+		// When holding an object, only UTILISER_SUR zones for that specific object
+		// respond.  Everything else (navigation, pick-up, documentation, dialogue)
+		// is blocked until the held item is returned to the inventory.
+		const int heldObject = getScriptVariableValue("main");
+		if (heldObject != 0 && !zone->commandName.equalsIgnoreCase("UTILISER_SUR")) {
+			warning("Egypt: click blocked — holding object %d (zone=%03u command=%s)",
+			        heldObject, zone->id, zone->command.c_str());
+			return false;
+		}
+
 		const uint zoneClick = resolveScriptZoneClick(*zone);
 		setRuntimeViewAngles(currentAlpha, currentBeta, true);
 
 		warning("Egypt: click %s mouse=%d,%d warp=%d,%d zone=%03u zoneclic=%u command=%s",
 		        _currentScene.name.c_str(), mousePos.x, mousePos.y, warpPoint.x, warpPoint.y,
 		        zone->id, zoneClick, zone->command.c_str());
+
+		// PRENDRE: pick up the named object and place it in main/cursor.
+		// Then run endwarp so the scene script can update variables and
+		// overlay/SPR sprites (e.g. hide the plank after picking it up).
+		if (zone->commandName.equalsIgnoreCase("PRENDRE")) {
+			const Common::String objKey = "Objet" + zone->label;
+			const int objectId = getScriptVariableValue(objKey);
+			if (objectId > 0) {
+				_scriptVariables["main"] = objectId;
+				setInterfaceCursor(getCursorFrameForHeldObject(objectId, false));
+				warning("Egypt: PRENDRE %s → main=%d", zone->label.c_str(), objectId);
+			} else {
+				warning("Egypt: PRENDRE %s — constant %s not found",
+				        zone->label.c_str(), objKey.c_str());
+			}
+			_pendingWarpTarget.clear();
+			_dialoguePendingLabel.clear();
+			runEndInit(zoneClick);
+			// EXE: objectValues[objectId]++ — increment the label variable so the script's
+			// "if planche!=0 goto DejaPris" guard fires and zoneactive is skipped next tick.
+			_scriptVariables[zone->label] = getScriptVariableValue(zone->label) + 1;
+			// Explicitly deactivate this zone regardless of what the script did —
+			// the object no longer exists in the scene.
+			const uint pickedZoneId = zone->id;
+			for (uint ai = 0; ai < _currentScene.activeZones.size(); ++ai) {
+				if (_currentScene.activeZones[ai] == pickedZoneId) {
+					_currentScene.activeZones.remove_at(ai);
+					break;
+				}
+			}
+			// After the increment above, the script's animspr guard (e.g.
+			// "if planche=0 animspr 1") no longer fires.  The decoded pixels
+			// from the last tick still sit in _sceneSprPixels; force a clear
+			// so the panorama re-renders immediately without the picked-up object.
+			if (!_sceneSprPixels.empty()) {
+				_sceneSprPixels.clear();
+				_sceneSprDirty = true;
+			}
+			return !_pendingWarpTarget.empty();
+		}
+
+		// UTILISER_SUR: only proceed if the held object matches the required one.
+		if (zone->commandName.equalsIgnoreCase("UTILISER_SUR") && !zone->label.empty()) {
+			const int held = getScriptVariableValue("main");
+			const Common::String objKey = "Objet" + zone->label;
+			const int requiredId = getScriptVariableValue(objKey);
+			if (requiredId == 0 || held != requiredId) {
+				warning("Egypt: UTILISER_SUR %s — held=%d required=%d, ignoring click",
+				        zone->label.c_str(), held, requiredId);
+				return false;
+			}
+			warning("Egypt: UTILISER_SUR %s — held=%d matches, proceeding",
+			        zone->label.c_str(), held);
+			// Fall through: the script (runEndInit) handles the result.
+		}
 
 		if (isDocumentationZone(*zone)) {
 			displayZoneDocumentation(*zone);
@@ -110,6 +139,9 @@ bool CryOmni3DEngine_Egypt::handleWarpClick(const Common::Point &mousePos, const
 				label.toLowercase();
 				warning("Egypt: DIALOGUER zone %03u → label '%s'", zone->id, label.c_str());
 				runDialogue(label);
+				// Refresh zones: dialogue may have changed variables that gate
+				// pickup zones (e.g. auto-increment on main=X removes the zone).
+				runEndInit(0);
 			}
 			return false;
 		}
@@ -275,6 +307,12 @@ const EgyptCentrage *CryOmni3DEngine_Egypt::findArrivalCentrage(Common::String *
 }
 
 Common::String CryOmni3DEngine_Egypt::resolvePrototypeWarpTarget(const Common::String &targetName) const {
+	if (targetName.equalsIgnoreCase("OLD")) {
+		if (!_pendingReturnScene.empty())
+			return _pendingReturnScene;
+		warning("Egypt: WARP:OLD but no return scene is set");
+		return Common::String();
+	}
 	return targetName;
 }
 
@@ -425,36 +463,16 @@ bool CryOmni3DEngine_Egypt::shouldUseDirectWarpFallback(const EgyptZone &zone, u
 		return false;
 	}
 
-	bool scriptUsesZoneclic = false;
-	bool scriptReferencesCurrentZoneclic = false;
-	for (Common::Array<Common::String>::const_iterator it = _currentScene.scriptLines.begin();
-	     it != _currentScene.scriptLines.end(); ++it) {
-		Common::String lower = *it;
-		lower.toLowercase();
-		if (lower.find("zoneclic") == Common::String::npos)
-			continue;
-
-		scriptUsesZoneclic = true;
-
-		Common::String compact = lower;
-		compact.replace(' ', '\0');
-		compact.replace('\t', '\0');
-		compact.deleteChar('\0');
-		if (scriptLineReferencesZoneclic(compact, zoneClick)) {
-			scriptReferencesCurrentZoneclic = true;
-			break;
-		}
-	}
-
-	if (_currentScene.hasWarpInit && _currentScene.hasEndWarp && scriptReferencesCurrentZoneclic)
-		return false;
-
-	if (_currentScene.hasWarpInit && _currentScene.hasEndWarp && scriptUsesZoneclic &&
-	    zone.commandName.equalsIgnoreCase("ALLER_WARP")) {
-		warning("Egypt: allowing direct warp fallback for zone %03u in %s because script does not reference zoneclic=%u",
-		        zone.id, _currentScene.name.c_str(), zoneClick);
-	}
-
+	// The guard used to check whether the script *syntactically* references this
+	// zoneclic value and block the direct warp if so.  That was too broad: S09
+	// references `if zoneclic!=1` to handle the pit-fall when FlagPlancheUse=0,
+	// but when FlagPlancheUse=1 the same click should use zone 1's ALLER_WARP
+	// S10 because the script runs through Suite1 without setting _pendingWarpTarget.
+	// The existing `_pendingWarpTarget.empty()` check at the call site already
+	// handles the real gating: if the script called aller_warp/aller_hnm_warp
+	// (e.g. the fall to MORT), _pendingWarpTarget is non-empty and the direct
+	// warp is never reached.  So always allow the direct warp here; S01's first-
+	// click intro path is the only exception that must stay scripted.
 	return true;
 }
 

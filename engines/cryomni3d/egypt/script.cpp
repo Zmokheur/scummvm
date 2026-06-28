@@ -137,6 +137,12 @@ bool CryOmni3DEngine_Egypt::executeScriptCommand(const Common::String &rawLine,
 		Common::String value = line.substr(11);
 		value.trim();
 		uint zoneId = (uint)atoi(value.c_str());
+		// EXE (0x412a16): zoneactive is a no-op when holding an object.
+		// The dialogue may give an item via "let main=X" without going through
+		// PRENDRE, leaving the pickup variable at 0 and the zone seemingly
+		// eligible — but the EXE's held-object guard prevents re-activation.
+		if (getScriptVariableValue("main") != 0)
+			return true;
 		bool alreadyActive = false;
 		for (Common::Array<uint>::const_iterator activeIt = _currentScene.activeZones.begin();
 		     activeIt != _currentScene.activeZones.end(); ++activeIt) {
@@ -472,6 +478,25 @@ void CryOmni3DEngine_Egypt::setScriptVariable(const Common::String &assignment) 
 	warning("Egypt: script variable %s=%d", name.c_str(), _scriptVariables[name]);
 	if (name.equalsIgnoreCase("Level"))
 		resetScriptTimer();
+
+	// EXE: the PRENDRE handler does objectValues[objectId]++ to mark the object as taken.
+	// When a script sets main=X directly (e.g. dialogue giving an item), the PRENDRE
+	// handler is bypassed, so the object variable stays at 0 and the pickup zone can
+	// re-activate after the item is stored.  Mirror the increment here for any
+	// assignment that places a known object into main.
+	if (name.equalsIgnoreCase("main") && result > 0) {
+		Common::HashMap<Common::String, int,
+		    Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo>::const_iterator cit;
+		for (cit = _scriptConstants.begin(); cit != _scriptConstants.end(); ++cit) {
+			if (cit->_value == result && cit->_key.hasPrefixIgnoreCase("Objet")) {
+				const Common::String varName = cit->_key.substr(5); // strip "Objet"
+				_scriptVariables[varName] = getScriptVariableValue(varName) + 1;
+				warning("Egypt: auto-increment %s=%d (main set via script to %d)",
+				        varName.c_str(), _scriptVariables[varName], result);
+				break;
+			}
+		}
+	}
 }
 
 bool CryOmni3DEngine_Egypt::executePrototypeSceneLogic() {

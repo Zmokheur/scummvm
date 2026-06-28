@@ -372,7 +372,21 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpFixed(const Graphics::Surface *fra
 		const Common::Point mouse = getMousePos();
 		// Zone coords for TGA scenes are in screen space — use mouse directly as warp point.
 		const EgyptZone *hoveredZone = findHoveredActiveZone(mouse);
-		setInterfaceCursor(hoveredZone ? getCursorFrameForZone(*hoveredZone) : getDefaultCursorFrame());
+		{
+			const int held = getScriptVariableValue("main");
+			uint cursorId;
+			if (held == 0) {
+				cursorId = hoveredZone ? getCursorFrameForZone(*hoveredZone) : getDefaultCursorFrame();
+			} else if (hoveredZone && hoveredZone->commandName.equalsIgnoreCase("UTILISER_SUR")) {
+				const int required = getScriptVariableValue("Objet" + hoveredZone->label);
+				cursorId = (required != 0 && held == required)
+				           ? getCursorFrameForHeldObject(held, true)
+				           : getDefaultCursorFrame();
+			} else {
+				cursorId = getDefaultCursorFrame();
+			}
+			setInterfaceCursor(cursorId);
+		}
 
 		if (getCurrentMouseButton() == 1) {
 			if (handleWarpClick(mouse, mouse, 0.0, 0.0))
@@ -618,8 +632,20 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpRotation(const Graphics::Surface *
 		Common::Point warpPoint = renderer.mapMouseCoords(mouse);
 		const EgyptZone *hoveredZone = findHoveredActiveZone(warpPoint);
 		const Common::String hoverText = getHoverTextForZone(hoveredZone);
-		if (hoveredZone)
-			movingCursor = getCursorFrameForZone(*hoveredZone);
+		{
+			const int held = getScriptVariableValue("main");
+			if (hoveredZone) {
+				if (held == 0) {
+					movingCursor = getCursorFrameForZone(*hoveredZone);
+				} else if (hoveredZone->commandName.equalsIgnoreCase("UTILISER_SUR")) {
+					const int required = getScriptVariableValue("Objet" + hoveredZone->label);
+					if (required != 0 && held == required)
+						movingCursor = getCursorFrameForHeldObject(held, true);
+					// else: keep movingCursor (nav arrow or default object cursor)
+				}
+				// else: object in hand blocks zone cursor highlight
+			}
+		}
 
 		Common::KeyState key = getNextKey();
 		if (getCurrentMouseButton() == 1) {

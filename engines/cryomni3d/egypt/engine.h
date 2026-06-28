@@ -233,6 +233,7 @@ private:
 	Common::HashMap<Common::String, int, Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo> _scriptConstants;
 	Common::HashMap<Common::String, bool, Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo> _loggedScriptCommands;
 	Common::String _pendingWarpTarget;
+	Common::String _pendingReturnScene; // set by eye warps: scene to return to after the eye scene exits
 	Common::String _currentContextName;
 	bool _currentViewAnglesAvailable = false;
 	double _currentViewAlpha = 0.0;
@@ -250,6 +251,10 @@ private:
 	bool _overlayDirty = false;
 	Common::Array<EgyptPendingOverlayPixel> _sceneSprPixels;
 	bool _sceneSprDirty = false;
+	// Zones always active regardless of script variables (e.g. UTILISER_SUR).
+	// Set once by autoActivateZoneclicZones(); each runEndInit resets activeZones
+	// to this baseline before re-running the script (mirrors EXE per-frame model).
+	Common::Array<uint> _autoActivationZones;
 	Common::Array<Common::String> _menuLabels;
 	bool _menuLabelsLoaded = false;
 	Common::HashMap<Common::String, EgyptMessageEntry, Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo> _messageLabels;

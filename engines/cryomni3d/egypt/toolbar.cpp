@@ -61,10 +61,52 @@ namespace {
 //   Zone 0x70-0x75 = Windows VK_F1-VK_F6 → scenes S00,D01,A02,N01A,M01,K43
 //   Zone 0x76     = Windows VK_F7         → dismiss
 
-static const int kSpriteSlot    = 15;  // 30×30 — empty inventory slot
-static const int kSpriteLeft    = 16;  // 20×20 — view-item button (sprite 17 = selected state)
-static const int kSpriteRight   = 18;  // 20×20 — documentation button
-static const int kSpriteOptions = 19;  // 20×20 — options / dismiss (bottom-aligned)
+static const int kSpriteSlot       = 15;  // 30×30 — empty inventory slot
+static const int kSpriteLeft       = 16;  // 20×20 — view-item / eye button (inactive)
+static const int kSpriteLeftActive = 17;  // 20×20 — eye button (active: main has eye action)
+static const int kSpriteRight      = 18;  // 20×20 — documentation button
+static const int kSpriteOptions    = 19;  // 20×20 — options / dismiss (bottom-aligned)
+
+// Object icon sprite base: objectId + kItemIconBase (EXE: objectId + 0x92)
+static const int kItemIconBase = 0x92;   // = 146
+
+// Eye action table (EXE 0x435774) — maps objectId to a packed action word.
+// Bit 15 set → warp: bits 14..0 = index into kEyeWarpTargets[].
+// Bit 15 clear → documentation ID passed to displayDocumentationById().
+struct EgyptEyeEntry { int objectId; uint32 action; };
+
+static const char *const kEyeWarpTargets[] = {
+    "ALL/HYPOS",      // 0
+    "ALL/LETTRE",     // 1
+    "ALL/LISTE_NO",   // 2
+    "ALL/OSTRAC_V",   // 3
+    "ALL/OSTRAC_R",   // 4
+    "ALL/CODE",       // 5
+    "ALL/D89PAPY"     // 6
+};
+
+static const EgyptEyeEntry kEyeTable[] = {
+    { 11, 363  },           { 14, 333  },
+    { 15, 3810 },           { 20, 366  },
+    { 23, 0x8000u | 0u },  { 24, 366  },
+    { 25, 0x8000u | 1u },  { 26, 0x8000u | 2u },
+    { 27, 331  },           { 28, 332  },
+    { 29, 204  },           { 30, 0x8000u | 5u },
+    { 35, 333  },           { 36, 388  },
+    { 37, 389  },           { 38, 0x8000u | 3u },
+    { 39, 387  },           { 40, 0x8000u | 6u },
+    { 41, 332  },           { 42, 387  },
+    { 48, 0x8000u | 4u },  { 50, 3811 },
+    { 51, 352  },           { 52, 3814 },
+    { 55, 331  },           { 57, 3812 }
+};
+
+static uint32 lookupEyeAction(int objectId) {
+    for (uint i = 0; i < ARRAYSIZE(kEyeTable); ++i)
+        if (kEyeTable[i].objectId == objectId)
+            return kEyeTable[i].action;
+    return 0;
+}
 
 static const int kToolbarH   = 48;  // toolbar height in pixels (EXE: push 0x30 at 0x8089ae)
 static const int kYSlot      = 11;  // sprite 15 y-offset within toolbar (EXE: 0x1eb - 48 - 432 = 11)
@@ -198,13 +240,32 @@ bool CryOmni3DEngine_Egypt::displayToolbar(const Graphics::Surface *original) {
 			const Common::Rect bgRect(0, position, 640, kToolbarH);
 			dest.copyRectToSurface(bgSurface.rawSurface(), 0, position, bgRect);
 
-			// Sprite layout identical in both modes (EXE 0x8089d0).
-			// Story mode: slots will eventually hold inventory item images.
-			// Visit mode:  slots are empty; site labels are drawn on hover below.
+			// Sprite layout (EXE 0x8089d0).
 			blitSpr(kSpriteOptions, kXOptions, kYOptions, position);
-			blitSpr(kSpriteLeft,    kXLeft,    kYButtons, position);
-			for (int i = 0; i < kSlotCount; i++)
+
+			// Eye button: active (17) in story mode when main object has an eye action.
+			if (!inVisitMode) {
+				const int mainId = getScriptVariableValue("main");
+				const uint32 eyeAct = (mainId != 0) ? lookupEyeAction(mainId) : 0u;
+				blitSpr(eyeAct != 0 ? kSpriteLeftActive : kSpriteLeft, kXLeft, kYButtons, position);
+			} else {
+				blitSpr(kSpriteLeft, kXLeft, kYButtons, position);
+			}
+
+			// Inventory slots: empty slot background + item icon on top.
+			for (int i = 0; i < kSlotCount; i++) {
 				blitSpr(kSpriteSlot, kSlotX0 + i * kSlotStep, kYSlot, position);
+				if (!inVisitMode) {
+					const int slotId = getScriptVariableValue(
+					    Common::String::format("inventaire%d", i));
+					if (slotId > 0) {
+						const int iconSpr = slotId + kItemIconBase;
+						if ((uint)iconSpr < _interfaceSprites.size())
+							blitSpr(iconSpr, kSlotX0 + i * kSlotStep, kYSlot, position);
+					}
+				}
+			}
+
 			blitSpr(kSpriteRight, kXRight, kYButtons, position);
 
 			// Visit mode: draw a tooltip label above the hovered slot (EXE 0x808683).
@@ -252,10 +313,11 @@ bool CryOmni3DEngine_Egypt::displayToolbar(const Graphics::Surface *original) {
 	waitMouseRelease();
 
 	// --- Event loop ---
-	int selectedScene   = -1;
-	int lastHoveredSlot = -2; // sentinel to force cursor initialisation
+	int  selectedScene   = -1;
+	int  lastHoveredSlot = -2; // sentinel to force cursor initialisation
+	bool eyeWarpQueued   = false;
 
-	while (!shouldAbort() && selectedScene < 0) {
+	while (!shouldAbort() && selectedScene < 0 && !eyeWarpQueued) {
 		pollEvents();
 
 		if (getCurrentMouseButton() == 2) {
@@ -294,12 +356,28 @@ bool CryOmni3DEngine_Egypt::displayToolbar(const Graphics::Surface *original) {
 			}
 
 			if (kRectLeft.contains(mouse)) {
-				// Sprite 16/17 — examine current item (story) / view-item (visit)
-				warning("EGYPT_TOOLBAR: view-item button clicked — not implemented yet");
+				// Eye / view-item button.
+				if (!inVisitMode) {
+					const int mainId = getScriptVariableValue("main");
+					if (mainId != 0) {
+						const uint32 eyeAct = lookupEyeAction(mainId);
+						if (eyeAct & 0x8000) {
+							const uint warpIdx = eyeAct & 0x7fff;
+							if (warpIdx < ARRAYSIZE(kEyeWarpTargets)) {
+								_pendingReturnScene = _currentScene.name;
+								_pendingWarpTarget  = kEyeWarpTargets[warpIdx];
+								eyeWarpQueued = true;
+								goto dismissToolbar;
+							}
+						} else if (eyeAct != 0) {
+							displayDocumentationById((int)eyeAct);
+						}
+					}
+				}
 				goto dismissToolbar;
 			}
 			if (kRectRight.contains(mouse)) {
-				// Sprite 18 — open documentary space
+				// Documentation button — not yet implemented.
 				warning("EGYPT_TOOLBAR: documentary space button clicked — not implemented yet");
 				goto dismissToolbar;
 			}
@@ -312,8 +390,40 @@ bool CryOmni3DEngine_Egypt::displayToolbar(const Graphics::Surface *original) {
 						// Visit mode: slot click = F-key equivalent → navigate to site
 						selectedScene = i;
 					} else if (!inVisitMode) {
-						// Story mode: slot click = select inventory item
-						warning("EGYPT_TOOLBAR: inventory slot %d clicked — not implemented yet", i);
+						// Story mode: swap main ↔ slot (EXE 0x4089d0).
+						const Common::String slotKey = Common::String::format("inventaire%d", i);
+						int held = getScriptVariableValue("main");
+						int slotVal = getScriptVariableValue(slotKey);
+
+						if (held == 0) {
+							if (slotVal != 0) {
+								_scriptVariables["main"] = slotVal;
+								_scriptVariables[slotKey] = 0;
+							}
+						} else if (slotVal == 0) {
+							_scriptVariables[slotKey] = held;
+							_scriptVariables["main"] = 0;
+						} else {
+							// Both non-zero: check Etoupe-on-Lampe special case.
+							const int etoupe = getScriptVariableValue("ObjetEtoupe");
+							const int lampe  = getScriptVariableValue("ObjetLampe");
+							if (etoupe > 0 && lampe > 0 &&
+							    held == etoupe && slotVal == lampe &&
+							    getScriptVariableValue("Etoupe_Sur_Lampe") == 0) {
+								_scriptVariables["Etoupe_Sur_Lampe"] = 1;
+								warning("Egypt: Etoupe_Sur_Lampe activated");
+							} else {
+								_scriptVariables["main"] = slotVal;
+								_scriptVariables[slotKey] = held;
+							}
+						}
+
+						// Update cursor to reflect new held object.
+						const int newMain = getScriptVariableValue("main");
+						if (newMain != 0)
+							setInterfaceCursor(getCursorFrameForHeldObject(newMain, false));
+						else
+							setInterfaceCursor(kEgyptCursorDefault);
 					}
 					break;
 				}
@@ -337,11 +447,15 @@ bool CryOmni3DEngine_Egypt::displayToolbar(const Graphics::Surface *original) {
 			if (newHoveredSlot != lastHoveredSlot) {
 				lastHoveredSlot = newHoveredSlot;
 				hoveredSlot     = newHoveredSlot;
-				// Visit mode: kEgyptCursorVisit on first 6 slots (EXE 0x808529)
-				if (inVisitMode && newHoveredSlot >= 0 && newHoveredSlot < 6)
+				if (inVisitMode && newHoveredSlot >= 0 && newHoveredSlot < 6) {
 					setInterfaceCursor(kEgyptCursorVisit);
-				else
-					setInterfaceCursor(kEgyptCursorDefault);
+				} else {
+					const int mainId = !inVisitMode ? getScriptVariableValue("main") : 0;
+					if (mainId != 0)
+						setInterfaceCursor(getCursorFrameForHeldObject(mainId, false));
+					else
+						setInterfaceCursor(kEgyptCursorDefault);
+				}
 			}
 		}
 
@@ -363,6 +477,8 @@ dismissToolbar:
 			return false;
 	}
 
+	if (eyeWarpQueued)
+		return true;
 	if (selectedScene >= 0 && selectedScene < 6) {
 		_pendingWarpTarget = kScenes[selectedScene];
 		return true;

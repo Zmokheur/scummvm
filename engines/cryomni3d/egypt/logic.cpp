@@ -145,6 +145,13 @@ void CryOmni3DEngine_Egypt::runWarpInit() {
 // endinit phase: run on each player interaction (and once with zoneclic=0 on scene load).
 // Determines active zones and handles navigation.
 void CryOmni3DEngine_Egypt::runEndInit(int zoneclic) {
+	// Reset to the baseline zones that are always active (e.g. UTILISER_SUR zones
+	// added by autoActivateZoneclicZones).  On the first call from runSceneStartup
+	// _autoActivationZones is still empty, so this is a no-op clear — same as
+	// before.  On subsequent calls (timer ticks, dialogue refresh) this mirrors
+	// the EXE's per-frame model: script-managed zones are re-evaluated from scratch.
+	_currentScene.activeZones = _autoActivationZones;
+
 	if (!_currentScene.hasEndInit) {
 		warning("Egypt: scene %s has no endinit marker", _currentScene.name.c_str());
 		return;
@@ -160,14 +167,20 @@ void CryOmni3DEngine_Egypt::runEndInit(int zoneclic) {
 // ── Zone auto-activation ──────────────────────────────────────────────────────
 
 // Safety-net: activate any zone whose id is directly compared against
-// 'zoneclic' in the script but was not explicitly activated by it.
+// 'zoneclic' in the script but was not activated by the initial runEndInit(0) pass.
+// We no longer skip zones that also appear in zoneactive/zoneinactive calls:
+// those calls may be in conditional branches that don't execute at startup
+// (e.g. S09 Zone 1 is activated in Suite1 only when FlagPlancheUse!=0, but
+// also referenced by "if zoneclic!=1" in Suite2 for the pit-fall path).
+// The alreadyActive guard is sufficient — if runEndInit(0) already activated
+// the zone, we don't add it again.
 void CryOmni3DEngine_Egypt::autoActivateZoneclicZones() {
+	const char *needle    = "zoneclic";
+	const size_t needleLen = 8;
 	for (uint i = 0; i < _currentScene.scriptLines.size(); ++i) {
 		Common::String lower = _currentScene.scriptLines[i];
 		lower.toLowercase();
-		const char *src       = lower.c_str();
-		const char *needle    = "zoneclic";
-		const size_t needleLen = 8;
+		const char *src = lower.c_str();
 
 		for (const char *pos = strstr(src, needle); pos != nullptr;
 		     pos = strstr(pos + needleLen, needle)) {
@@ -201,6 +214,7 @@ void CryOmni3DEngine_Egypt::autoActivateZoneclicZones() {
 			}
 			if (!alreadyActive) {
 				_currentScene.activeZones.push_back((uint)zoneId);
+				_autoActivationZones.push_back((uint)zoneId);
 				warning("Egypt: auto-activating zone %u in %s (referenced by zoneclic comparison)",
 				        (uint)zoneId, _currentScene.name.c_str());
 			}
@@ -225,12 +239,17 @@ void CryOmni3DEngine_Egypt::runSceneStartup() {
 	Common::String startupDlgLabel = _dialoguePendingLabel;
 	_dialoguePendingLabel.clear();
 
-	// Fallback: if no zone was activated by the script, enable all non-zero-rect zones
+	// Fallback: if no zone was activated by the script, enable all non-zero-rect zones.
+	// This fires when holding an object blocks every zoneactive call (EXE 0x412a16).
+	// Track the fallback set in _autoActivationZones so subsequent runEndInit resets
+	// (timer ticks, post-dialogue) preserve them while main!=0.
 	if (_currentScene.activeZones.empty()) {
 		for (uint i = 0; i < _currentScene.zones.size(); ++i) {
 			const EgyptZone &z = _currentScene.zones[i];
-			if (z.left != 0 || z.top != 0 || z.right != 0 || z.bottom != 0)
+			if (z.left != 0 || z.top != 0 || z.right != 0 || z.bottom != 0) {
 				_currentScene.activeZones.push_back(z.id);
+				_autoActivationZones.push_back(z.id);
+			}
 		}
 		warning("Egypt: no zones activated in %s, enabling all non-zero-rect zones",
 		        _currentScene.name.c_str());
@@ -247,8 +266,14 @@ void CryOmni3DEngine_Egypt::runSceneStartup() {
 	        _currentScene.name.c_str(), activeList.c_str());
 
 	// Dialogue demandé par le script de démarrage (ex : SuiteInit → dialoguer N).
-	if (!startupDlgLabel.empty())
+	if (!startupDlgLabel.empty()) {
 		runDialogue(startupDlgLabel);
+		// The dialogue may have changed script variables (e.g. giving an item sets
+		// main, auto-incrementing the object variable).  Refresh active zones so
+		// any pickup zone that is now gated-out is removed immediately, rather
+		// than persisting until the first timer tick.
+		runEndInit(0);
+	}
 }
 
 // ── Screen fade ───────────────────────────────────────────────────────────────
