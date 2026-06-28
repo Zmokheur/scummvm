@@ -39,6 +39,22 @@ struct EgyptDialogChoice {
 	Common::String displayText;
 };
 
+// SPA/SPB portrait patch sprite.
+// Each frame is a TXEN/RLE block with its own screen coordinates baked in.
+struct EgyptDialogSprite {
+	uint frameCount = 0;
+	Common::Array<byte> data;  // decompressed SPA/SPB (8-byte entry table + TXEN/RLE blocks)
+
+	bool empty() const { return frameCount == 0; }
+	void clear() { frameCount = 0; data.clear(); }
+};
+
+// One event from a .SYC mouth-sync file.
+struct EgyptSycEvent {
+	uint32 timeMs;
+	uint32 phonemeCode;
+};
+
 // Outcome produced by executing a single dialogue node's commands.
 // The caller displays node.text (if non-empty) then acts on this.
 enum EgyptDialogResult {

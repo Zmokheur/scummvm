@@ -215,8 +215,15 @@ void CryOmni3DEngine_Egypt::autoActivateZoneclicZones() {
 void CryOmni3DEngine_Egypt::runSceneStartup() {
 	_currentScene.activeZones.clear();
 
+	// Clear avant les deux phases : warpinit et endinit peuvent poser un label.
+	_dialoguePendingLabel.clear();
 	runWarpInit();
 	runEndInit(0);
+
+	// Capturer le label posé par l'une ou l'autre phase (warpinit a la priorité
+	// si les deux en posent un, car endinit l'écrase ; on prend le dernier).
+	Common::String startupDlgLabel = _dialoguePendingLabel;
+	_dialoguePendingLabel.clear();
 
 	// Fallback: if no zone was activated by the script, enable all non-zero-rect zones
 	if (_currentScene.activeZones.empty()) {
@@ -238,6 +245,10 @@ void CryOmni3DEngine_Egypt::runSceneStartup() {
 	}
 	warning("Egypt: initial active zones for %s = [%s]",
 	        _currentScene.name.c_str(), activeList.c_str());
+
+	// Dialogue demandé par le script de démarrage (ex : SuiteInit → dialoguer N).
+	if (!startupDlgLabel.empty())
+		runDialogue(startupDlgLabel);
 }
 
 // ── Screen fade ───────────────────────────────────────────────────────────────

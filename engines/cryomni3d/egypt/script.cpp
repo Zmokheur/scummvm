@@ -341,6 +341,18 @@ bool CryOmni3DEngine_Egypt::evaluateScriptCondition(const Common::String &expres
 	Common::String condition = expression;
 	condition.trim();
 
+	// Handle "and" / "or" conjunctions (case-insensitive) by splitting recursively.
+	Common::String condLower = condition;
+	condLower.toLowercase();
+	int andPos = condLower.find(" and ");
+	if (andPos >= 0)
+		return evaluateScriptCondition(condition.substr(0, andPos)) &&
+		       evaluateScriptCondition(condition.substr(andPos + 5));
+	int orPos = condLower.find(" or ");
+	if (orPos >= 0)
+		return evaluateScriptCondition(condition.substr(0, orPos)) ||
+		       evaluateScriptCondition(condition.substr(orPos + 4));
+
 	struct Operator {
 		const char *symbol;
 		int length;

@@ -22,6 +22,8 @@
 #ifndef CRYOMNI3D_EGYPT_ENGINE_H
 #define CRYOMNI3D_EGYPT_ENGINE_H
 
+#include "audio/mixer.h"
+
 #include "common/array.h"
 #include "common/fs.h"
 #include "common/hash-str.h"
@@ -196,6 +198,13 @@ private:
 	                                    Common::String &outText,
 	                                    Common::Array<EgyptDialogChoice> &outChoices,
 	                                    Common::String &outNextLabel);
+	bool loadDialogSprite(const Common::Path &path, EgyptDialogSprite &out);
+	void loadDialogSpeaker(const Common::String &speakerName, int level);
+	void loadDialogSyc(const Common::String &label);
+	void blitDialogSpriteFrame(Graphics::ManagedSurface &dst,
+	                           const EgyptDialogSprite &sprite, uint frame);
+	void playDialogVoice(const Common::String &label);
+	void stopDialogVoice();
 	void showDialogText(const Graphics::ManagedSurface &background, const Common::String &text);
 	int  showDialogChoices(const Graphics::ManagedSurface &background,
 	                       const Common::Array<EgyptDialogChoice> &choices);
@@ -253,6 +262,16 @@ private:
 	                Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo> _dialogueNodes;
 	bool _dialogueLevelLoaded = false;
 	Common::String _dialoguePendingLabel;
+	Graphics::Surface _dlgTga;               // image de base statique (TGA)
+	EgyptDialogSprite _dlgSpa;               // patches visage/idle (TXEN/RLE)
+	EgyptDialogSprite _dlgSpb;               // patches bouche (TXEN/RLE, piloté par SYC)
+	Common::String    _dlgSpeakerName;
+	Audio::SoundHandle _dlgVoiceHandle;
+	Common::Array<EgyptSycEvent> _dlgSycEvents;
+	uint _dlgSycEventIdx = 0;
+	uint _dlgIdleFrameIdx = 0;               // index dans kIdleMouthFrames pour SPA
+	uint32 _dlgIdleNextMs = 0;              // prochain tick animation idle
+	uint32 _dlgNodeStartMs = 0;             // timestamp début du nœud courant
 };
 
 } // End of namespace Egypt
