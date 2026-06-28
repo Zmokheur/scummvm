@@ -561,6 +561,17 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpRotation(const Graphics::Surface *
 	warning("Egypt: interactive rotation enabled for %s, click or press space to continue",
 	        _currentScene.name.c_str());
 
+	// Consume any scene SPR overlay set by warpinit (e.g. the plank in S03) before
+	// the first render so it's visible in the cross-fade and not just from the first
+	// display-loop tick onward.
+	if (_sceneSprDirty) {
+		if (!_sceneSprPixels.empty()) {
+			applySceneSprToPanorama(*panoramaCopy.surfacePtr());
+			renderer.markSourceChanged();
+		}
+		_sceneSprDirty = false;
+	}
+
 	{
 		const Graphics::Surface *firstFrame = renderer.getSurface();
 		if (firstFrame) {
