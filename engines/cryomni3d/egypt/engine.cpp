@@ -65,6 +65,16 @@ void CryOmni3DEngine_Egypt::initializePath(const Common::FSNode &gamePath) {
 	SearchMan.addSubDirectoryMatching(gamePath, "warp", 0, 5, false);
 }
 
+void CryOmni3DEngine_Egypt::resetGameVariables() {
+	Common::fill(_gameVariables.begin(), _gameVariables.end(), 0u);
+	_pendingReturnScene.clear();
+	_currentContextName = "NUIT";
+	_currentViewAnglesAvailable = false;
+	_currentViewAlpha = 0.0;
+	_currentViewBeta = 0.0;
+	_dialogueLevelLoaded = false;
+}
+
 Common::Error CryOmni3DEngine_Egypt::run() {
 	CryOmni3DEngine::run();
 
@@ -85,11 +95,15 @@ Common::Error CryOmni3DEngine_Egypt::run() {
 		if (nextMode == EgyptStartupMode::kQuit)
 			break;
 
-		// Reset persistent variables that must not carry over from a previous session.
+		// Always clear EndGame so a previous session ending doesn't pollute the new one.
 		_gameVariables[GameVariables::kEndGame] = 0;
 
 		Common::String sceneName;
 		switch (nextMode) {
+		case EgyptStartupMode::kResume:
+			// Re-enter the game without touching variables.
+			sceneName = _savedSceneName;
+			break;
 		case EgyptStartupMode::kStory:
 			sceneName = startStoryModePrototype();
 			break;
@@ -142,6 +156,18 @@ Common::Error CryOmni3DEngine_Egypt::run() {
 				_pendingReturnScene.clear();
 			} else {
 				break;
+			}
+		}
+
+		// Update resume state based on how the session ended.
+		if (_isPlaying) {
+			if (getScriptVariableValue("EndGame") != 0) {
+				// Game ended normally — no longer resumable.
+				_isPlaying = false;
+				_savedSceneName.clear();
+			} else if (!sceneName.empty()) {
+				// Session interrupted (dead-end or future back-to-menu action) — save position.
+				_savedSceneName = sceneName;
 			}
 		}
 	}

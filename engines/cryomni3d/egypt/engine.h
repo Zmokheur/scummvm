@@ -364,6 +364,7 @@ protected:
 private:
 	enum class EgyptStartupMode {
 		kMainMenu,
+		kResume,
 		kStory,
 		kVisit,
 		kDocumentation,
@@ -376,6 +377,7 @@ private:
 		kDebugLevel6
 	};
 
+	void resetGameVariables();
 	void setupSprites();
 	bool loadInterfaceSprites(const Common::Path &filename);
 
@@ -494,6 +496,9 @@ private:
 	void executeHnmSequence(const Common::String &hnmJoined);
 	void resetScriptTimer();
 	void updateScriptTimer();
+
+	bool _isPlaying = false;
+	Common::String _savedSceneName;
 
 	EgyptScene _currentScene;
 	Common::Array<uint> _gameVariables;

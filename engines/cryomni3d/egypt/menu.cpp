@@ -45,17 +45,18 @@ const bool kEgyptStartupDebugStoryEntryEnabled = false;
 const char *const kEgyptStartupDebugStoryEntryScene = "S01";
 
 enum EgyptMenuEntry {
-	kEgyptMenuStory = 0,
-	kEgyptMenuVisit = 1,
-	kEgyptMenuDocumentation = 2,
-	kEgyptMenuQuit = 3,
-	kEgyptMenuDebugLevel1 = 4,
-	kEgyptMenuDebugLevel2 = 5,
-	kEgyptMenuDebugLevel3 = 6,
-	kEgyptMenuDebugLevel4 = 7,
-	kEgyptMenuDebugLevel5 = 8,
-	kEgyptMenuDebugLevel6 = 9,
-	kEgyptMenuCount = 10
+	kEgyptMenuResume = 0,
+	kEgyptMenuStory = 1,
+	kEgyptMenuVisit = 2,
+	kEgyptMenuDocumentation = 3,
+	kEgyptMenuQuit = 4,
+	kEgyptMenuDebugLevel1 = 5,
+	kEgyptMenuDebugLevel2 = 6,
+	kEgyptMenuDebugLevel3 = 7,
+	kEgyptMenuDebugLevel4 = 8,
+	kEgyptMenuDebugLevel5 = 9,
+	kEgyptMenuDebugLevel6 = 10,
+	kEgyptMenuCount = 11
 };
 
 static const char *const kDebugLevelScenes[] = { "S00", "D01", "A02", "N01A", "M01", "K43" };
@@ -76,6 +77,7 @@ bool CryOmni3DEngine_Egypt::loadMenuLabels() {
 		return true;
 
 	_menuLabels.clear();
+	_menuLabels.push_back("Reprendre la partie");  // kEgyptMenuResume
 	_menuLabels.push_back("Commencer le jeu");
 	_menuLabels.push_back("Visiter le site");
 	_menuLabels.push_back("Consulter l'espace documentaire");
@@ -326,7 +328,8 @@ void CryOmni3DEngine_Egypt::drawMenuScreen(Graphics::ManagedSurface &surface, in
 	const uint32 hoverColor = surface.format.RGBToColor(255, 214, 96);
 	const uint32 hintColor = surface.format.RGBToColor(180, 180, 180);
 
-	const Common::Rect panel(36, 248, 398, 442);
+	// Left panel: extend upward to fit the optional Resume entry.
+	const Common::Rect panel(36, 234, 398, 454);
 	surface.fillRect(panel, panelColor);
 	surface.frameRect(panel, borderColor);
 
@@ -337,19 +340,31 @@ void CryOmni3DEngine_Egypt::drawMenuScreen(Graphics::ManagedSurface &surface, in
 
 	const Common::String title = hasBackground ? "Menu principal" : "Egypt 1156";
 	if (titleFont)
-		titleFont->drawString(&surface, title, 56, 266, 320, titleColor);
+		titleFont->drawString(&surface, title, 56, 252, 320, titleColor);
 
-	const char *const hotkeys[kEgyptMenuDebugLevel1] = { "1", "2", "3", "Esc" };
-	int y = 304;
-	for (int i = 0; i < kEgyptMenuDebugLevel1; ++i, y += 30) {
+	// Resume entry: shown active only when a game is in progress.
+	{
+		const uint32 resumeColor = _isPlaying
+		    ? ((kEgyptMenuResume == hoveredEntry) ? hoverColor : textColor)
+		    : surface.format.RGBToColor(90, 90, 90);
+		Common::String resumeLine = Common::String::format("[R] %s", _menuLabels[kEgyptMenuResume].c_str());
+		if (bodyFont)
+			bodyFont->drawString(&surface, resumeLine, 58, 282, 320, resumeColor);
+	}
+
+	// Remaining fixed entries: Story, Visit, Docs, Quit.
+	const char *const hotkeys[kEgyptMenuDebugLevel1 - kEgyptMenuStory] = { "1", "2", "3", "Esc" };
+	int y = 312;
+	for (int i = kEgyptMenuStory; i < kEgyptMenuDebugLevel1; ++i, y += 30) {
 		const uint32 color = (i == hoveredEntry) ? hoverColor : textColor;
-		Common::String line = Common::String::format("[%s] %s", hotkeys[i], _menuLabels[i].c_str());
+		Common::String line = Common::String::format("[%s] %s",
+		    hotkeys[i - kEgyptMenuStory], _menuLabels[i].c_str());
 		if (bodyFont)
 			bodyFont->drawString(&surface, line, 58, y, 320, color);
 	}
 
 	if (bodyFont)
-		bodyFont->drawString(&surface, hasBackground ? "ACC_FR.TGA + libelles du jeu" : "Fallback menu", 58, 410, 320, hintColor);
+		bodyFont->drawString(&surface, hasBackground ? "ACC_FR.TGA + libelles du jeu" : "Fallback menu", 58, 426, 320, hintColor);
 
 	const uint32 debugBorderColor = surface.format.RGBToColor(60, 140, 60);
 	const uint32 debugTitleColor = surface.format.RGBToColor(100, 210, 100);
@@ -403,9 +418,13 @@ CryOmni3DEngine_Egypt::EgyptStartupMode CryOmni3DEngine_Egypt::showMainMenu() {
 		surface.clear(surface.format.RGBToColor(0, 0, 0));
 
 	Common::Rect boxes[kEgyptMenuCount];
-	int hoveredEntry = kEgyptMenuStory;
-	for (int i = 0; i < kEgyptMenuDebugLevel1; ++i)
-		boxes[i] = Common::Rect(52, 300 + i * 30, 366, 324 + i * 30);
+	int hoveredEntry = _isPlaying ? kEgyptMenuResume : kEgyptMenuStory;
+	// Resume entry (conditional).
+	boxes[kEgyptMenuResume] = Common::Rect(52, 278, 366, 302);
+	// Story, Visit, Docs, Quit.
+	for (int i = kEgyptMenuStory; i < kEgyptMenuDebugLevel1; ++i)
+		boxes[i] = Common::Rect(52, 308 + (i - kEgyptMenuStory) * 30, 366, 332 + (i - kEgyptMenuStory) * 30);
+	// Debug levels.
 	for (int i = kEgyptMenuDebugLevel1; i < kEgyptMenuCount; ++i) {
 		const int di = i - kEgyptMenuDebugLevel1;
 		boxes[i] = Common::Rect(414, 292 + di * 25, 628, 314 + di * 25);
@@ -447,6 +466,10 @@ CryOmni3DEngine_Egypt::EgyptStartupMode CryOmni3DEngine_Egypt::showMainMenu() {
 					waitMouseRelease();
 					showMouse(false);
 					switch (i) {
+					case kEgyptMenuResume:
+						if (_isPlaying)
+							return EgyptStartupMode::kResume;
+						break;
 					case kEgyptMenuStory:
 						return EgyptStartupMode::kStory;
 					case kEgyptMenuVisit:
@@ -473,7 +496,10 @@ CryOmni3DEngine_Egypt::EgyptStartupMode CryOmni3DEngine_Egypt::showMainMenu() {
 		}
 
 		Common::KeyCode keycode = getNextKey().keycode;
-		if (keycode == Common::KEYCODE_1 || keycode == Common::KEYCODE_KP1) {
+		if ((keycode == Common::KEYCODE_r) && _isPlaying) {
+			showMouse(false);
+			return EgyptStartupMode::kResume;
+		} else if (keycode == Common::KEYCODE_1 || keycode == Common::KEYCODE_KP1) {
 			showMouse(false);
 			return EgyptStartupMode::kStory;
 		} else if (keycode == Common::KEYCODE_2 || keycode == Common::KEYCODE_KP2) {
@@ -512,6 +538,10 @@ CryOmni3DEngine_Egypt::EgyptStartupMode CryOmni3DEngine_Egypt::showMainMenu() {
 		} else if (keycode == Common::KEYCODE_RETURN || keycode == Common::KEYCODE_SPACE) {
 			showMouse(false);
 			switch (hoveredEntry) {
+			case kEgyptMenuResume:
+				if (_isPlaying)
+					return EgyptStartupMode::kResume;
+				break;
 			case kEgyptMenuStory:
 				return EgyptStartupMode::kStory;
 			case kEgyptMenuVisit:
@@ -541,8 +571,11 @@ CryOmni3DEngine_Egypt::EgyptStartupMode CryOmni3DEngine_Egypt::showMainMenu() {
 }
 
 Common::String CryOmni3DEngine_Egypt::startStoryModePrototype() {
+	resetGameVariables();
 	clearPendingWarpRequest();
 	_pendingWarpTarget.clear();
+	_isPlaying = true;
+	_savedSceneName.clear();
 	_gameVariables[GameVariables::kFlagVisite] = 0;
 	_gameVariables[GameVariables::kMain] = 0;
 	_gameVariables[GameVariables::kLevel] = 1;
@@ -558,8 +591,11 @@ Common::String CryOmni3DEngine_Egypt::startStoryModePrototype() {
 }
 
 Common::String CryOmni3DEngine_Egypt::startDebugLevel(int level, const Common::String &scene) {
+	resetGameVariables();
 	clearPendingWarpRequest();
 	_pendingWarpTarget.clear();
+	_isPlaying = true;
+	_savedSceneName.clear();
 	_gameVariables[GameVariables::kFlagVisite] = 0;
 	_gameVariables[GameVariables::kMain] = 0;
 	_gameVariables[GameVariables::kLevel] = level;
