@@ -362,7 +362,7 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpFixed(const Graphics::Surface *fra
 		if (_sceneHasTimerScript) {
 			updateScriptTimer();
 			runEndInit(0);
-			if (!_pendingWarpTarget.empty()) {
+			if (!_pendingWarpTarget.empty() || getScriptVariableValue("EndGame") != 0) {
 				exitView = true;
 				break;
 			}
@@ -575,7 +575,7 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpRotation(const Graphics::Surface *
 		if (_sceneHasTimerScript) {
 			updateScriptTimer();
 			runEndInit(0);
-			if (!_pendingWarpTarget.empty()) {
+			if (!_pendingWarpTarget.empty() || getScriptVariableValue("EndGame") != 0) {
 				exitRotation = true;
 				break;
 			}

@@ -84,6 +84,9 @@ Common::Error CryOmni3DEngine_Egypt::run() {
 		if (nextMode == EgyptStartupMode::kQuit)
 			break;
 
+		// Reset persistent variables that must not carry over from a previous session.
+		_scriptVariables["EndGame"] = 0;
+
 		Common::String sceneName;
 		switch (nextMode) {
 		case EgyptStartupMode::kStory:
@@ -268,6 +271,33 @@ void CryOmni3DEngine_Egypt::loadScene(const Common::String &sceneName) {
 
 	if (mainBeforeInit != 0)
 		_scriptVariables["main"] = mainBeforeInit;
+
+	// EXE (0x407e95): after endinit, tests "endgame"; if non-zero sets state=0 and
+	// exits the scene loop.  Check here so FIN (which sets EndGame=1 on its first
+	// endinit) returns to the main menu without ever displaying the black TGA.
+	if (getScriptVariableValue("EndGame") != 0) {
+		warning("Egypt: EndGame set in %s, returning to main menu", _currentScene.name.c_str());
+		return;
+	}
+
+	// Scenes like MORT use a two-pass deferred pattern: the first endinit sets a
+	// counter (tmp 0→1) and takes no action; the second fires aller_hnm_warp/aller_warp.
+	// These scenes have no interactive zones and no timer script, so the display loop
+	// would never call runEndInit again.  Give them one extra tick here.
+	if (_pendingWarpTarget.empty() &&
+	    _currentScene.activeZones.empty() &&
+	    !_sceneHasTimerScript) {
+		runEndInit(0);
+		if (getScriptVariableValue("EndGame") != 0) {
+			warning("Egypt: EndGame set after extra tick in %s", _currentScene.name.c_str());
+			return;
+		}
+	}
+
+	// If startup (or the extra tick above) already queued a warp, skip display.
+	// The run() loop will load the target scene on the next iteration.
+	if (!_pendingWarpTarget.empty())
+		return;
 
 	_hasCrossFadeOldScreen = false;
 	// WARP:OLD returns to the eye-warp origin scene: no cross-fade (EXE behaviour).
