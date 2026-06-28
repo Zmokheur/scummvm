@@ -173,7 +173,6 @@ void CryOmni3DEngine_Egypt::decodeOverlayFrame(uint frameIndex) {
 	}
 
 	const uint32 pixelOffset = READ_LE_UINT32(data + frameIndex * 8);
-	const int16 overlayHeight = (int16)READ_LE_UINT16(data + frameIndex * 8 + 4);
 
 	if (pixelOffset >= dataSize) {
 		warning("Egypt: overlay frame %u pixel offset 0x%08x out of range", frameIndex, pixelOffset);
@@ -183,7 +182,8 @@ void CryOmni3DEngine_Egypt::decodeOverlayFrame(uint frameIndex) {
 	const byte *ptr = data + pixelOffset;
 	const byte *end = data + dataSize;
 
-	// Check for TXEN/NEXT header (confirmed from EXE at 0x819bd7)
+	// TXEN/RLE header — same format as SPA/SPB portrait patches.
+	// Coordinates are in screen space (640×480), rows go top-down.
 	int16 txenY = 0;
 	int16 txenX = 0;
 	if (ptr + 12 <= end) {
@@ -195,33 +195,29 @@ void CryOmni3DEngine_Egypt::decodeOverlayFrame(uint frameIndex) {
 		}
 	}
 
-	// RLE rows from bottom of overlay region going up (confirmed from EXE at 0x8196e7)
-	// First row lands at panorama y = 767 - txenY
-	int panY = 767 - (int)txenY;
-	uint rowsLeft = (overlayHeight > 0) ? (uint)overlayHeight : 0u;
+	int screenY = (int)txenY;
+	int line = 0;
 
 	while (ptr + 2 <= end) {
 		const uint16 token = READ_LE_UINT16(ptr); ptr += 2;
 		if (token == 0)
 			break;
 		if (token == 0xFFFF) {
-			if (rowsLeft == 0) break;
-			panY--;
-			rowsLeft--;
+			++line;
+			screenY = (int)txenY + line;
 			continue;
 		}
-		// Pixel run: x_abs is absolute within the row (esi + x_abs*2 in EXE at 0x81973d)
 		if (ptr + 2 > end) break;
 		const uint16 xAbs = READ_LE_UINT16(ptr); ptr += 2;
-		const int panXBase = (int)txenX + (int)xAbs;
+		const int xBase = (int)txenX + (int)xAbs;
 
 		for (uint16 i = 0; i < token && ptr + 2 <= end; i++) {
 			const uint16 rgb565 = READ_LE_UINT16(ptr); ptr += 2;
-			const int px = panXBase + (int)i;
-			if (px >= 0 && px < 2048 && panY >= 0 && panY < 768) {
+			const int px = xBase + (int)i;
+			if (px >= 0 && px < 640 && screenY >= 0 && screenY < 480) {
 				EgyptPendingOverlayPixel p;
 				p.x = (uint16)px;
-				p.y = (uint16)panY;
+				p.y = (uint16)screenY;
 				p.rgb565 = rgb565;
 				_pendingOverlayPixels.push_back(p);
 			}
@@ -229,6 +225,7 @@ void CryOmni3DEngine_Egypt::decodeOverlayFrame(uint frameIndex) {
 	}
 
 	_hasPendingOverlay = !_pendingOverlayPixels.empty();
+	_overlayDirty = true;
 	warning("Egypt: decoded overlay frame %u → %u pixels", frameIndex, (uint)_pendingOverlayPixels.size());
 }
 
@@ -244,6 +241,154 @@ void CryOmni3DEngine_Egypt::applyOverlayToSurface(Graphics::Surface &surface) co
 		if (p.x >= surfW || p.y >= surfH) continue;
 
 		// Expand RGB565 to 8-bit channels
+		const uint8 r5 = (p.rgb565 >> 11) & 0x1f;
+		const uint8 g6 = (p.rgb565 >>  5) & 0x3f;
+		const uint8 b5 = (p.rgb565      ) & 0x1f;
+		const uint8 r = (r5 << 3) | (r5 >> 2);
+		const uint8 g = (g6 << 2) | (g6 >> 4);
+		const uint8 b = (b5 << 3) | (b5 >> 2);
+
+		const uint32 color = fmt.RGBToColor(r, g, b);
+		void *dst = surface.getBasePtr(p.x, p.y);
+		switch (fmt.bytesPerPixel) {
+		case 2:
+			WRITE_LE_UINT16(dst, (uint16)color);
+			break;
+		case 4:
+			WRITE_LE_UINT32(dst, color);
+			break;
+		default:
+			break;
+		}
+	}
+}
+
+void CryOmni3DEngine_Egypt::decodeSceneSprFrame(uint frameIndex) {
+	_sceneSprPixels.clear();
+	_sceneSprDirty = false;
+
+	if (_sceneOverlayData.empty()) return;
+
+	const byte *data = _sceneOverlayData.data();
+	const uint dataSize = _sceneOverlayData.size();
+
+	if (dataSize < 8) return;
+
+	const uint32 firstPixelOffset = READ_LE_UINT32(data);
+	if (firstPixelOffset == 0 || (firstPixelOffset % 8) != 0 || firstPixelOffset > dataSize) {
+		warning("Egypt: scene SPR table has invalid first offset 0x%08x", firstPixelOffset);
+		return;
+	}
+
+	const uint frameCount = firstPixelOffset / 8;
+	if (frameIndex >= frameCount) {
+		warning("Egypt: decodeSceneSprFrame %u out of range (%u frames)", frameIndex, frameCount);
+		return;
+	}
+
+	const uint32 pixelOffset = READ_LE_UINT32(data + frameIndex * 8);
+	if (pixelOffset >= dataSize) {
+		warning("Egypt: scene SPR frame %u pixel offset 0x%08x out of range", frameIndex, pixelOffset);
+		return;
+	}
+
+	const byte *ptr = data + pixelOffset;
+	const byte *end = data + dataSize;
+
+	// TXEN header: magic(4) + y(2) + x(2) + height(2) + width(2) = 12 bytes
+	int16 txenY = 0;
+	int16 txenX = 0;
+	if (ptr + 12 <= end) {
+		const uint32 magic = READ_LE_UINT32(ptr);
+		if (magic == 0x4e455854u /* TXEN LE */ || magic == 0x5458454eu /* NEXT LE */) {
+			txenY = (int16)READ_LE_UINT16(ptr + 4);
+			txenX = (int16)READ_LE_UINT16(ptr + 6);
+			ptr += 12;
+		}
+	}
+
+	// Store raw TXEN coords: p.y = txenY + rleLine (top-down, screen-like).
+	// applySceneSprToPanorama inverts Y to panorama space (767 - p.y).
+	// applySceneSprToScreen uses p.y directly for fixed TGA views.
+	int line = 0;
+
+	while (ptr + 2 <= end) {
+		const uint16 token = READ_LE_UINT16(ptr); ptr += 2;
+		if (token == 0)
+			break;
+		if (token == 0xFFFF) {
+			++line;
+			continue;
+		}
+		if (ptr + 2 > end) break;
+		const uint16 xAbs = READ_LE_UINT16(ptr); ptr += 2;
+		const int xBase = (int)txenX + (int)xAbs;
+		const int rawY  = (int)txenY + line;
+
+		for (uint16 i = 0; i < token && ptr + 2 <= end; i++) {
+			const uint16 rgb565 = READ_LE_UINT16(ptr); ptr += 2;
+			const int px = xBase + (int)i;
+			if (px >= 0 && px < 2048 && rawY >= 0 && rawY < 768) {
+				EgyptPendingOverlayPixel p;
+				p.x = (uint16)px;
+				p.y = (uint16)rawY;
+				p.rgb565 = rgb565;
+				_sceneSprPixels.push_back(p);
+			}
+		}
+	}
+
+	_sceneSprDirty = !_sceneSprPixels.empty();
+	warning("Egypt: decoded scene SPR frame %u → %u panorama pixels (txen x=%d y=%d)",
+	        frameIndex, (uint)_sceneSprPixels.size(), (int)txenX, (int)txenY);
+}
+
+void CryOmni3DEngine_Egypt::applySceneSprToPanorama(Graphics::Surface &surface) const {
+	if (_sceneSprPixels.empty()) return;
+
+	const Graphics::PixelFormat &fmt = surface.format;
+	const uint surfW = (uint)surface.w;
+	const uint surfH = (uint)surface.h;
+
+	for (uint i = 0; i < _sceneSprPixels.size(); i++) {
+		const EgyptPendingOverlayPixel &p = _sceneSprPixels[i];
+		// p.y is stored as txenY + rleLine; panorama Y is inverted: 767 - p.y
+		const uint panoramaY = (p.y <= 767) ? (767 - p.y) : 0;
+		if (p.x >= surfW || panoramaY >= surfH) continue;
+
+		const uint8 r5 = (p.rgb565 >> 11) & 0x1f;
+		const uint8 g6 = (p.rgb565 >>  5) & 0x3f;
+		const uint8 b5 = (p.rgb565      ) & 0x1f;
+		const uint8 r = (r5 << 3) | (r5 >> 2);
+		const uint8 g = (g6 << 2) | (g6 >> 4);
+		const uint8 b = (b5 << 3) | (b5 >> 2);
+
+		const uint32 color = fmt.RGBToColor(r, g, b);
+		void *dst = surface.getBasePtr(p.x, panoramaY);
+		switch (fmt.bytesPerPixel) {
+		case 2:
+			WRITE_LE_UINT16(dst, (uint16)color);
+			break;
+		case 4:
+			WRITE_LE_UINT32(dst, color);
+			break;
+		default:
+			break;
+		}
+	}
+}
+
+void CryOmni3DEngine_Egypt::applySceneSprToScreen(Graphics::Surface &surface) const {
+	if (_sceneSprPixels.empty()) return;
+
+	const Graphics::PixelFormat &fmt = surface.format;
+	const uint surfW = (uint)surface.w;
+	const uint surfH = (uint)surface.h;
+
+	for (uint i = 0; i < _sceneSprPixels.size(); i++) {
+		const EgyptPendingOverlayPixel &p = _sceneSprPixels[i];
+		if (p.x >= surfW || p.y >= surfH) continue;
+
 		const uint8 r5 = (p.rgb565 >> 11) & 0x1f;
 		const uint8 g6 = (p.rgb565 >>  5) & 0x3f;
 		const uint8 b5 = (p.rgb565      ) & 0x1f;

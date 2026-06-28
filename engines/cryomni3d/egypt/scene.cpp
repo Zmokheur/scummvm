@@ -117,7 +117,9 @@ void CryOmni3DEngine_Egypt::parseSceneDefinition(const Common::Path &filename, c
 		if (!_sceneHasTimerScript) {
 			Common::String lower = line;
 			lower.toLowercase();
-			if (lower.find("timer") != Common::String::npos)
+			if (lower.find("timer") != Common::String::npos ||
+			    lower.hasPrefixIgnoreCase("animspr ") ||
+			    lower.hasPrefixIgnoreCase("editspr "))
 				_sceneHasTimerScript = true;
 		}
 		if (line.hasPrefixIgnoreCase("centrage ")) {

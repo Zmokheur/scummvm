@@ -54,6 +54,7 @@ struct EgyptOverlayCatalogEntry {
 	uint32 base;
 	uint32 count;
 	uint32 counter;
+	uint32 lastTick = 0;
 };
 
 struct EgyptPendingOverlayPixel {
@@ -190,6 +191,9 @@ private:
 	bool loadSceneOverlay(const Common::String &sceneName);
 	void decodeOverlayFrame(uint frameIndex);
 	void applyOverlayToSurface(Graphics::Surface &surface) const;
+	void decodeSceneSprFrame(uint frameIndex);
+	void applySceneSprToPanorama(Graphics::Surface &surface) const;
+	void applySceneSprToScreen(Graphics::Surface &surface) const;
 
 	// dialogue.cpp — Level.txt dialogue system
 	bool loadLevelTxt();
@@ -243,6 +247,9 @@ private:
 	Common::Array<EgyptOverlayCatalogEntry> _sceneOverlayCatalog;
 	Common::Array<EgyptPendingOverlayPixel> _pendingOverlayPixels;
 	bool _hasPendingOverlay = false;
+	bool _overlayDirty = false;
+	Common::Array<EgyptPendingOverlayPixel> _sceneSprPixels;
+	bool _sceneSprDirty = false;
 	Common::Array<Common::String> _menuLabels;
 	bool _menuLabelsLoaded = false;
 	Common::HashMap<Common::String, EgyptMessageEntry, Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo> _messageLabels;

@@ -141,6 +141,8 @@ public:
 		return _xSpeed != 0. || _ySpeed != 0.;
 	}
 
+	void markSourceChanged() { _dirty = true; }
+
 	double getAlpha() const { return _alpha; }
 	double getBeta() const { return _beta; }
 
@@ -395,6 +397,10 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpFixed(const Graphics::Surface *fra
 			exitView = true;
 
 		compositedFrame.blitFrom(*frame);
+		if (!_sceneSprPixels.empty())
+			applySceneSprToScreen(*compositedFrame.surfacePtr());
+		if (_sceneSprDirty)
+			_sceneSprDirty = false;
 
 		const Common::String hoverText = getHoverTextForZone(hoveredZone);
 		if (!hoverText.empty()) {
@@ -493,18 +499,13 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpPreview(const Common::Path &warpPa
 }
 
 bool CryOmni3DEngine_Egypt::displayCurrentWarpRotation(const Graphics::Surface *frame) {
-	Graphics::Surface overlaidFrame;
-	const Graphics::Surface *sourceFrame = frame;
-	if (_hasPendingOverlay) {
-		overlaidFrame.copyFrom(*frame);
-		applyOverlayToSurface(overlaidFrame);
-		sourceFrame = &overlaidFrame;
-		warning("Egypt: applied %u overlay pixels to warp panorama for %s",
-		        (uint)_pendingOverlayPixels.size(), _currentScene.name.c_str());
-	}
+	// Mutable copy of the panorama so scene SPR overlays can be composited into it
+	// before Omni3D projection (TXEN coords are in panorama space, Y inverted).
+	Graphics::ManagedSurface panoramaCopy;
+	panoramaCopy.copyFrom(*frame);
 
 	EgyptWarpRenderer renderer;
-	renderer.init(75. / 180. * M_PI, sourceFrame);
+	renderer.init(75. / 180. * M_PI, panoramaCopy.surfacePtr());
 	Graphics::ManagedSurface compositedFrame(640, 480, g_system->getScreenFormat());
 
 	double arrivalAlpha = 0.0;
@@ -565,6 +566,7 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpRotation(const Graphics::Surface *
 				break;
 			}
 		}
+
 		pollEvents();
 
 		Common::Point mouse = getMousePos();
@@ -658,11 +660,19 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpRotation(const Graphics::Surface *
 		}
 
 		auto drawFrame = [&]() {
+			if (_sceneSprDirty) {
+				panoramaCopy.blitFrom(*frame);
+				applySceneSprToPanorama(*panoramaCopy.surfacePtr());
+				renderer.markSourceChanged();
+				_sceneSprDirty = false;
+			}
 			const Graphics::Surface *result = renderer.getSurface();
 			if (!result)
 				return;
 
 			compositedFrame.blitFrom(*result);
+			if (_hasPendingOverlay)
+				applyOverlayToSurface(*compositedFrame.surfacePtr());
 			if (!hoverText.empty()) {
 				const Graphics::Font *font = FontMan.getFontByUsage(Graphics::FontManager::kGUIFont);
 				if (font) {
@@ -711,7 +721,6 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpRotation(const Graphics::Surface *
 	waitMouseRelease();
 	clearKeys();
 	showMouse(false);
-	overlaidFrame.free();
 	return true;
 }
 

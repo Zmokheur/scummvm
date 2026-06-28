@@ -202,6 +202,9 @@ void CryOmni3DEngine_Egypt::loadScene(const Common::String &sceneName) {
 	_sceneOverlayCatalog.clear();
 	_pendingOverlayPixels.clear();
 	_hasPendingOverlay = false;
+	_overlayDirty = false;
+	_sceneSprPixels.clear();
+	_sceneSprDirty = false;
 
 	if (_pendingWarp.viaHnm && !_pendingWarp.hnmName.empty())
 		executeHnmSequence(_pendingWarp.hnmName);

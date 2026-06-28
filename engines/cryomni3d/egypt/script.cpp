@@ -19,6 +19,7 @@
  *
  */
 
+#include "common/system.h"
 #include "common/textconsole.h"
 #include "common/util.h"
 
@@ -243,10 +244,14 @@ bool CryOmni3DEngine_Egypt::executeScriptCommand(const Common::String &rawLine,
 		const int n = atoi(args.c_str());
 		if (n >= 1 && (uint)(n - 1) < _sceneOverlayCatalog.size()) {
 			EgyptOverlayCatalogEntry &entry = _sceneOverlayCatalog[(uint)(n - 1)];
+			const uint32 now = g_system->getMillis();
+			if (now - entry.lastTick < 70)
+				return true;
+			entry.lastTick = now;
 			const uint frameIdx = entry.base + entry.counter;
-			decodeOverlayFrame(frameIdx);
+			decodeSceneSprFrame(frameIdx);
 			entry.counter = (entry.counter + 1) % entry.count;
-			warning("Egypt: animspr %d → frame %u (next counter=%u)", n, frameIdx, entry.counter);
+			warning("Egypt: animspr %d → scene SPR frame %u (next counter=%u)", n, frameIdx, entry.counter);
 		} else {
 			warning("Egypt: animspr %d out of range (catalog size=%u)", n, (uint)_sceneOverlayCatalog.size());
 		}
