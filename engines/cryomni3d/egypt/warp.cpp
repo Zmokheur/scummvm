@@ -59,7 +59,7 @@ bool CryOmni3DEngine_Egypt::handleWarpClick(const Common::Point &mousePos, const
 			const Common::String objKey = "Objet" + zone->label;
 			const int objectId = getScriptVariableValue(objKey);
 			if (objectId > 0) {
-				_scriptVariables["main"] = objectId;
+				_gameVariables[GameVariables::kMain] = objectId;
 				setInterfaceCursor(getCursorFrameForHeldObject(objectId, false));
 				warning("Egypt: PRENDRE %s → main=%d", zone->label.c_str(), objectId);
 			} else {
@@ -71,7 +71,7 @@ bool CryOmni3DEngine_Egypt::handleWarpClick(const Common::Point &mousePos, const
 			runEndInit(zoneClick);
 			// EXE: objectValues[objectId]++ — increment the label variable so the script's
 			// "if planche!=0 goto DejaPris" guard fires and zoneactive is skipped next tick.
-			_scriptVariables[zone->label] = getScriptVariableValue(zone->label) + 1;
+			setGameVar(zone->label, getScriptVariableValue(zone->label) + 1);
 			// Explicitly deactivate this zone regardless of what the script did —
 			// the object no longer exists in the scene.
 			const uint pickedZoneId = zone->id;

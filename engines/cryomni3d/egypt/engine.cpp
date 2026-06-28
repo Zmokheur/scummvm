@@ -40,6 +40,7 @@ CryOmni3DEngine_Egypt::CryOmni3DEngine_Egypt(OSystem *syst,
 		_currentContextName("NUIT"),
 		_lastHoveredZoneId(uint(-1)) {
 	_pendingWarp.active = false;
+	_gameVariables.resize(GameVariables::kMax, 0);
 }
 
 CryOmni3DEngine_Egypt::~CryOmni3DEngine_Egypt() {
@@ -85,7 +86,7 @@ Common::Error CryOmni3DEngine_Egypt::run() {
 			break;
 
 		// Reset persistent variables that must not carry over from a previous session.
-		_scriptVariables["EndGame"] = 0;
+		_gameVariables[GameVariables::kEndGame] = 0;
 
 		Common::String sceneName;
 		switch (nextMode) {
@@ -270,7 +271,7 @@ void CryOmni3DEngine_Egypt::loadScene(const Common::String &sceneName) {
 	runSceneStartup();
 
 	if (mainBeforeInit != 0)
-		_scriptVariables["main"] = mainBeforeInit;
+		_gameVariables[GameVariables::kMain] = mainBeforeInit;
 
 	// EXE (0x407e95): after endinit, tests "endgame"; if non-zero sets state=0 and
 	// exits the scene loop.  Check here so FIN (which sets EndGame=1 on its first

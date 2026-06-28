@@ -137,7 +137,7 @@ void CryOmni3DEngine_Egypt::runWarpInit() {
 		warning("Egypt: scene %s has no warpinit marker", _currentScene.name.c_str());
 		return;
 	}
-	_scriptVariables["zoneclic"] = 0;
+	_gameVariables[GameVariables::kZoneclic] = 0;
 	Common::Array<Common::String> block = extractScriptBlock("warpinit", "endinit");
 	executeScriptBlock(block, 0, 0.0, 0.0);
 }
@@ -156,7 +156,7 @@ void CryOmni3DEngine_Egypt::runEndInit(int zoneclic) {
 		warning("Egypt: scene %s has no endinit marker", _currentScene.name.c_str());
 		return;
 	}
-	_scriptVariables["zoneclic"] = zoneclic;
+	_gameVariables[GameVariables::kZoneclic] = zoneclic;
 	double alpha = 0.0, beta = 0.0;
 	bool available = false;
 	getRuntimeSourceViewAngles(alpha, beta, available);
@@ -450,13 +450,13 @@ void CryOmni3DEngine_Egypt::executeHnmSequence(const Common::String &hnmJoined) 
 
 void CryOmni3DEngine_Egypt::resetScriptTimer() {
 	_scriptTimerStartMs = g_system->getMillis();
-	_scriptVariables["timer"] = 0;
+	_gameVariables[GameVariables::kTimer] = 0;
 	warning("Egypt: timer reset for scene %s", _currentScene.name.c_str());
 }
 
 void CryOmni3DEngine_Egypt::updateScriptTimer() {
 	const uint32 elapsed = g_system->getMillis() - _scriptTimerStartMs;
-	_scriptVariables["timer"] = (int)(elapsed / 10); // centièmes de seconde
+	_gameVariables[GameVariables::kTimer] = (uint)(elapsed / 10); // centièmes de seconde
 }
 
 } // End of namespace Egypt

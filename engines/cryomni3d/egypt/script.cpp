@@ -28,6 +28,268 @@
 namespace CryOmni3D {
 namespace Egypt {
 
+// Maps DEF script variable names (case-insensitive) to GameVariables::Var indices.
+// Built once on first call; safe because variable names are fixed at compile time.
+static int gameVarIndex(const Common::String &name) {
+	typedef Common::HashMap<Common::String, int,
+	    Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo> VarMap;
+	static VarMap s_map;
+	if (s_map.empty()) {
+		s_map["zoneclic"]                 = GameVariables::kZoneclic;
+		s_map["tmp"]                      = GameVariables::kTmp;
+		s_map["timer"]                    = GameVariables::kTimer;
+		s_map["message"]                  = GameVariables::kMessage;
+		s_map["Level"]                    = GameVariables::kLevel;
+		s_map["FlagVisite"]               = GameVariables::kFlagVisite;
+		s_map["EndGame"]                  = GameVariables::kEndGame;
+		s_map["FlagFinDuJeu"]             = GameVariables::kFlagFinDuJeu;
+		s_map["InitLevel1"]               = GameVariables::kInitLevel1;
+		s_map["InitLevel2"]               = GameVariables::kInitLevel2;
+		s_map["InitLevel3"]               = GameVariables::kInitLevel3;
+		s_map["InitLevel4"]               = GameVariables::kInitLevel4;
+		s_map["InitLevel5"]               = GameVariables::kInitLevel5;
+		s_map["InitLevel6"]               = GameVariables::kInitLevel6;
+		s_map["main"]                     = GameVariables::kMain;
+		s_map["inventaire0"]              = GameVariables::kInventaire0;
+		s_map["inventaire1"]              = GameVariables::kInventaire1;
+		s_map["inventaire2"]              = GameVariables::kInventaire2;
+		s_map["inventaire3"]              = GameVariables::kInventaire3;
+		s_map["inventaire4"]              = GameVariables::kInventaire4;
+		s_map["inventaire5"]              = GameVariables::kInventaire5;
+		s_map["inventaire6"]              = GameVariables::kInventaire6;
+		s_map["inventaire7"]              = GameVariables::kInventaire7;
+		s_map["inventaire8"]              = GameVariables::kInventaire8;
+		s_map["inventaire9"]              = GameVariables::kInventaire9;
+		s_map["Amulette"]                 = GameVariables::kAmulette;
+		s_map["Anoouver"]                 = GameVariables::kAnoouver;
+		s_map["Bague"]                    = GameVariables::kBague;
+		s_map["Baton"]                    = GameVariables::kBaton;
+		s_map["Bol"]                      = GameVariables::kBol;
+		s_map["Boom"]                     = GameVariables::kBoom;
+		s_map["Butin5"]                   = GameVariables::kButin5;
+		s_map["Butin6"]                   = GameVariables::kButin6;
+		s_map["Cheville"]                 = GameVariables::kCheville;
+		s_map["Coffre"]                   = GameVariables::kCoffre;
+		s_map["CollierL"]                 = GameVariables::kCollierL;
+		s_map["Colonne"]                  = GameVariables::kColonne;
+		s_map["Coupelle"]                 = GameVariables::kCoupelle;
+		s_map["Couteau"]                  = GameVariables::kCouteau;
+		s_map["Deben"]                    = GameVariables::kDeben;
+		s_map["Echelle"]                  = GameVariables::kEchelle;
+		s_map["Etoupe"]                   = GameVariables::kEtoupe;
+		s_map["HypoPlan"]                 = GameVariables::kHypoPlan;
+		s_map["Lampe"]                    = GameVariables::kLampe;
+		s_map["ListApel"]                 = GameVariables::kListApel;
+		s_map["Maquil1"]                  = GameVariables::kMaquil1;
+		s_map["Mekhet"]                   = GameVariables::kMekhet;
+		s_map["NoeudTit"]                 = GameVariables::kNoeudTit;
+		s_map["OeilOudj"]                 = GameVariables::kOeilOudj;
+		s_map["Ostracon"]                 = GameVariables::kOstracon;
+		s_map["Ouadj"]                    = GameVariables::kOuadj;
+		s_map["Papymag1"]                 = GameVariables::kPapymag1;
+		s_map["Perruque"]                 = GameVariables::kPerruque;
+		s_map["Planche"]                  = GameVariables::kPlanche;
+		s_map["PotArgen"]                 = GameVariables::kPotArgen;
+		s_map["PotGros"]                  = GameVariables::kPotGros;
+		s_map["PotPetit"]                 = GameVariables::kPotPetit;
+		s_map["Revers"]                   = GameVariables::kRevers;
+		s_map["Scarabe"]                  = GameVariables::kScarabe;
+		s_map["Senet"]                    = GameVariables::kSenet;
+		s_map["Serpent"]                  = GameVariables::kSerpent;
+		s_map["Statuete"]                 = GameVariables::kStatuete;
+		s_map["Torche"]                   = GameVariables::kTorche;
+		s_map["VaseOr"]                   = GameVariables::kVaseOr;
+		s_map["Vautour"]                  = GameVariables::kVautour;
+		s_map["Accouchement_deja_vu"]     = GameVariables::kAccouchement_deja_vu;
+		s_map["ArriveeCatafalque"]        = GameVariables::kArriveeCatafalque;
+		s_map["Bague_presentee"]          = GameVariables::kBague_presentee;
+		s_map["BagueRecue"]               = GameVariables::kBagueRecue;
+		s_map["Boire"]                    = GameVariables::kBoire;
+		s_map["BoissonN"]                 = GameVariables::kBoissonN;
+		s_map["BoissonP"]                 = GameVariables::kBoissonP;
+		s_map["Cabaretiere"]              = GameVariables::kCabaretiere;
+		s_map["Cabaretiere_Achetee"]      = GameVariables::kCabaretiere_Achetee;
+		s_map["CompteurCheville"]         = GameVariables::kCompteurCheville;
+		s_map["DepartCatafalque"]         = GameVariables::kDepartCatafalque;
+		s_map["Depart_Cabaretiere_Ramose"] = GameVariables::kDepart_Cabaretiere_Ramose;
+		s_map["Echelle_Posee"]            = GameVariables::kEchelle_Posee;
+		s_map["Entree_Maison_Hori"]       = GameVariables::kEntree_Maison_Hori;
+		s_map["Etoupe_Sur_Lampe"]         = GameVariables::kEtoupe_Sur_Lampe;
+		s_map["NbCaseM45"]                = GameVariables::kNbCaseM45;
+		s_map["NbChanceEnigmeA17"]        = GameVariables::kNbChanceEnigmeA17;
+		s_map["NbChanceStel"]             = GameVariables::kNbChanceStel;
+		s_map["Ouverture_Porte_D05"]      = GameVariables::kOuverture_Porte_D05;
+		s_map["Ouvrier_Excede"]           = GameVariables::kOuvrier_Excede;
+		s_map["PassageK19Ok"]             = GameVariables::kPassageK19Ok;
+		s_map["Ram_Tue_Cobra"]            = GameVariables::kRam_Tue_Cobra;
+		s_map["Ram_voir_cobra"]           = GameVariables::kRam_voir_cobra;
+		s_map["Ram_Voir_Puits"]           = GameVariables::kRam_Voir_Puits;
+		s_map["Ramose_Baton"]             = GameVariables::kRamose_Baton;
+		s_map["ReponseViseeOk"]           = GameVariables::kReponseViseeOk;
+		s_map["TimeBolPose"]              = GameVariables::kTimeBolPose;
+		s_map["FlagAccesS40Truie"]        = GameVariables::kFlagAccesS40Truie;
+		s_map["FlagAllerN06"]             = GameVariables::kFlagAllerN06;
+		s_map["FlagAmuletteA14Prise"]     = GameVariables::kFlagAmuletteA14Prise;
+		s_map["FlagAmulettePrise"]        = GameVariables::kFlagAmulettePrise;
+		s_map["FlagAmuletteReconstitue"]  = GameVariables::kFlagAmuletteReconstitue;
+		s_map["FlagAnneauOuvertPris"]     = GameVariables::kFlagAnneauOuvertPris;
+		s_map["FlagArriveeA09A10"]        = GameVariables::kFlagArriveeA09A10;
+		s_map["FlagBagueSpriteS43"]       = GameVariables::kFlagBagueSpriteS43;
+		s_map["FlagBaton"]                = GameVariables::kFlagBaton;
+		s_map["FlagBolPose"]              = GameVariables::kFlagBolPose;
+		s_map["FlagBolPris"]              = GameVariables::kFlagBolPris;
+		s_map["FlagBoomPris"]             = GameVariables::kFlagBoomPris;
+		s_map["FlagButin1Pris"]           = GameVariables::kFlagButin1Pris;
+		s_map["FlagButin5Actionner"]      = GameVariables::kFlagButin5Actionner;
+		s_map["FlagButin5Pris"]           = GameVariables::kFlagButin5Pris;
+		s_map["FlagButin5Voir"]           = GameVariables::kFlagButin5Voir;
+		s_map["FlagCabBague"]             = GameVariables::kFlagCabBague;
+		s_map["FlagCase1EnigmeA17"]       = GameVariables::kFlagCase1EnigmeA17;
+		s_map["FlagCase2EnigmeA17"]       = GameVariables::kFlagCase2EnigmeA17;
+		s_map["FlagCase3EnigmeA17"]       = GameVariables::kFlagCase3EnigmeA17;
+		s_map["FlagCase4EnigmeA17"]       = GameVariables::kFlagCase4EnigmeA17;
+		s_map["FlagCaseM45Heri"]          = GameVariables::kFlagCaseM45Heri;
+		s_map["FlagCaseM45Nefer"]         = GameVariables::kFlagCaseM45Nefer;
+		s_map["FlagCaseM45Pedjet"]        = GameVariables::kFlagCaseM45Pedjet;
+		s_map["FlagCaseM45Ptah"]          = GameVariables::kFlagCaseM45Ptah;
+		s_map["FlagChevillePrise"]        = GameVariables::kFlagChevillePrise;
+		s_map["FlagCoffreActionne"]       = GameVariables::kFlagCoffreActionne;
+		s_map["FlagCoffrePris"]           = GameVariables::kFlagCoffrePris;
+		s_map["FlagCollierLDonne"]        = GameVariables::kFlagCollierLDonne;
+		s_map["FlagCollierLPris"]         = GameVariables::kFlagCollierLPris;
+		s_map["FlagCompteurEnigme2"]      = GameVariables::kFlagCompteurEnigme2;
+		s_map["FlagCouffinD85COUFA"]      = GameVariables::kFlagCouffinD85COUFA;
+		s_map["FlagCoupellePrise"]        = GameVariables::kFlagCoupellePrise;
+		s_map["FlagCouteauPris"]          = GameVariables::kFlagCouteauPris;
+		s_map["FlagDejaEntreN06"]         = GameVariables::kFlagDejaEntreN06;
+		s_map["FlagDessinateurMort"]      = GameVariables::kFlagDessinateurMort;
+		s_map["FlagDial1K50"]             = GameVariables::kFlagDial1K50;
+		s_map["FlagDial2K50"]             = GameVariables::kFlagDial2K50;
+		s_map["FlagDial3K50"]             = GameVariables::kFlagDial3K50;
+		s_map["FlagDialAutoM27"]          = GameVariables::kFlagDialAutoM27;
+		s_map["FlagDialAutoM40"]          = GameVariables::kFlagDialAutoM40;
+		s_map["FlagDialAutoM42"]          = GameVariables::kFlagDialAutoM42;
+		s_map["FlagDialAutoS31"]          = GameVariables::kFlagDialAutoS31;
+		s_map["FlagDialD04"]              = GameVariables::kFlagDialD04;
+		s_map["FlagDialD72"]              = GameVariables::kFlagDialD72;
+		s_map["FlagDialD72_1"]            = GameVariables::kFlagDialD72_1;
+		s_map["FlagDialD72_2"]            = GameVariables::kFlagDialD72_2;
+		s_map["FlagDialIntendanteMonte"]  = GameVariables::kFlagDialIntendanteMonte;
+		s_map["FlagDialK38"]              = GameVariables::kFlagDialK38;
+		s_map["FlagDialScreen"]           = GameVariables::kFlagDialScreen;
+		s_map["FlagDialSMT0001"]          = GameVariables::kFlagDialSMT0001;
+		s_map["FlagDialogueK41"]          = GameVariables::kFlagDialogueK41;
+		s_map["FlagDialogueK50"]          = GameVariables::kFlagDialogueK50;
+		s_map["FlagEchellePrise"]         = GameVariables::kFlagEchellePrise;
+		s_map["FlagEmbaumeurA09Parti"]    = GameVariables::kFlagEmbaumeurA09Parti;
+		s_map["FlagEmbaumeurA17Assome"]   = GameVariables::kFlagEmbaumeurA17Assome;
+		s_map["FlagEmbaumeurA17Parti"]    = GameVariables::kFlagEmbaumeurA17Parti;
+		s_map["FlagEnchainementWARP_HNM"] = GameVariables::kFlagEnchainementWARP_HNM;
+		s_map["FlagEnigme2_9"]            = GameVariables::kFlagEnigme2_9;
+		s_map["FlagEnigme2_10"]           = GameVariables::kFlagEnigme2_10;
+		s_map["FlagEnigme2_11"]           = GameVariables::kFlagEnigme2_11;
+		s_map["FlagEnigme2_12"]           = GameVariables::kFlagEnigme2_12;
+		s_map["FlagEnigme2_13"]           = GameVariables::kFlagEnigme2_13;
+		s_map["FlagEnigme2_14"]           = GameVariables::kFlagEnigme2_14;
+		s_map["FlagEnigme2_15"]           = GameVariables::kFlagEnigme2_15;
+		s_map["FlagEnigme2_16"]           = GameVariables::kFlagEnigme2_16;
+		s_map["FlagEnigme2_17"]           = GameVariables::kFlagEnigme2_17;
+		s_map["FlagEnigme2_18"]           = GameVariables::kFlagEnigme2_18;
+		s_map["FlagEnigme2_19"]           = GameVariables::kFlagEnigme2_19;
+		s_map["FlagEnigme2_20"]           = GameVariables::kFlagEnigme2_20;
+		s_map["FlagEnigme2_21"]           = GameVariables::kFlagEnigme2_21;
+		s_map["FlagEnigme2_22"]           = GameVariables::kFlagEnigme2_22;
+		s_map["FlagEnigme2_23"]           = GameVariables::kFlagEnigme2_23;
+		s_map["FlagEnigme2_24"]           = GameVariables::kFlagEnigme2_24;
+		s_map["FlagEnigmeA17"]            = GameVariables::kFlagEnigmeA17;
+		s_map["FlagEnigmeCollierL"]       = GameVariables::kFlagEnigmeCollierL;
+		s_map["FlagEnigmeColonne"]        = GameVariables::kFlagEnigmeColonne;
+		s_map["FlagEnigmeNoeudTit"]       = GameVariables::kFlagEnigmeNoeudTit;
+		s_map["FlagEnigmeOeilOudj"]       = GameVariables::kFlagEnigmeOeilOudj;
+		s_map["FlagEnigmeOuadj"]          = GameVariables::kFlagEnigmeOuadj;
+		s_map["FlagEnigmeScarabe"]        = GameVariables::kFlagEnigmeScarabe;
+		s_map["FlagEnigmeSerpent"]        = GameVariables::kFlagEnigmeSerpent;
+		s_map["FlagEnigmeVautour"]        = GameVariables::kFlagEnigmeVautour;
+		s_map["FlagEntreeM32"]            = GameVariables::kFlagEntreeM32;
+		s_map["FlagEntreeS01"]            = GameVariables::kFlagEntreeS01;
+		s_map["FlagEtatClepsydre"]        = GameVariables::kFlagEtatClepsydre;
+		s_map["FlagEtoupePris"]           = GameVariables::kFlagEtoupePris;
+		s_map["FlagForceDialN06Stel"]     = GameVariables::kFlagForceDialN06Stel;
+		s_map["FlagGrosPotPris"]          = GameVariables::kFlagGrosPotPris;
+		s_map["FlagHorologueK38Parti"]    = GameVariables::kFlagHorologueK38Parti;
+		s_map["FlagK19Butin5"]            = GameVariables::kFlagK19Butin5;
+		s_map["FlagK19Butin6"]            = GameVariables::kFlagK19Butin6;
+		s_map["FlagLampeHuilePrise"]      = GameVariables::kFlagLampeHuilePrise;
+		s_map["FlagLettrePrise"]          = GameVariables::kFlagLettrePrise;
+		s_map["FlagMaquil1Porte"]         = GameVariables::kFlagMaquil1Porte;
+		s_map["FlagMaquil1Pris"]          = GameVariables::kFlagMaquil1Pris;
+		s_map["FlagMessageCode1"]         = GameVariables::kFlagMessageCode1;
+		s_map["FlagMessageCode2"]         = GameVariables::kFlagMessageCode2;
+		s_map["FlagMessageCode3"]         = GameVariables::kFlagMessageCode3;
+		s_map["FlagMessageCode4"]         = GameVariables::kFlagMessageCode4;
+		s_map["FlagMouseVisee"]           = GameVariables::kFlagMouseVisee;
+		s_map["FlagNbButinMontre"]        = GameVariables::kFlagNbButinMontre;
+		s_map["FlagNbFlecheTire"]         = GameVariables::kFlagNbFlecheTire;
+		s_map["FlagNicheM21Ouverte"]      = GameVariables::kFlagNicheM21Ouverte;
+		s_map["FlagNiveau6Temps2"]        = GameVariables::kFlagNiveau6Temps2;
+		s_map["FlagOstraconPose"]         = GameVariables::kFlagOstraconPose;
+		s_map["FlagPapyrusIntegre"]       = GameVariables::kFlagPapyrusIntegre;
+		s_map["FlagPapyrusPris"]          = GameVariables::kFlagPapyrusPris;
+		s_map["FlagPerruquePorte"]        = GameVariables::kFlagPerruquePorte;
+		s_map["FlagPerruquePris"]         = GameVariables::kFlagPerruquePris;
+		s_map["FlagPetitPotPris"]         = GameVariables::kFlagPetitPotPris;
+		s_map["FlagPlanche"]              = GameVariables::kFlagPlanche;
+		s_map["FlagPlancheRelevee"]       = GameVariables::kFlagPlancheRelevee;
+		s_map["FlagPlancheUse"]           = GameVariables::kFlagPlancheUse;
+		s_map["FlagPlayChat"]             = GameVariables::kFlagPlayChat;
+		s_map["FlagPoignardPris"]         = GameVariables::kFlagPoignardPris;
+		s_map["FlagPorteA05"]             = GameVariables::kFlagPorteA05;
+		s_map["FlagPorteA05EmbaumeParti"] = GameVariables::kFlagPorteA05EmbaumeParti;
+		s_map["FlagPorteA07"]             = GameVariables::kFlagPorteA07;
+		s_map["FlagPorteTchaiOuverte"]    = GameVariables::kFlagPorteTchaiOuverte;
+		s_map["FlagRamoseHabille"]        = GameVariables::kFlagRamoseHabille;
+		s_map["FlagReponseVisee"]         = GameVariables::kFlagReponseVisee;
+		s_map["FlagS40Ostracon"]          = GameVariables::kFlagS40Ostracon;
+		s_map["FlagS40Pierre"]            = GameVariables::kFlagS40Pierre;
+		s_map["FlagSablier"]              = GameVariables::kFlagSablier;
+		s_map["FlagSenetPris"]            = GameVariables::kFlagSenetPris;
+		s_map["FlagSocleOuvert"]          = GameVariables::kFlagSocleOuvert;
+		s_map["FlagSoundChat"]            = GameVariables::kFlagSoundChat;
+		s_map["FlagStatuetteDeplacee"]    = GameVariables::kFlagStatuetteDeplacee;
+		s_map["FlagStatuettePrise"]       = GameVariables::kFlagStatuettePrise;
+		s_map["FlagTeleporteK12"]         = GameVariables::kFlagTeleporteK12;
+		s_map["FlagTimerA05"]             = GameVariables::kFlagTimerA05;
+		s_map["FlagTimerCab"]             = GameVariables::kFlagTimerCab;
+		s_map["FlagTiroirDroitOuvert"]    = GameVariables::kFlagTiroirDroitOuvert;
+		s_map["FlagTuniquePris"]          = GameVariables::kFlagTuniquePris;
+		s_map["FlagUseGrosPot"]           = GameVariables::kFlagUseGrosPot;
+		s_map["FlagUseK50Butin5"]         = GameVariables::kFlagUseK50Butin5;
+		s_map["FlagUseK50Butin6"]         = GameVariables::kFlagUseK50Butin6;
+		s_map["FlagUseSenet"]             = GameVariables::kFlagUseSenet;
+		s_map["FlagVaseOrPris"]           = GameVariables::kFlagVaseOrPris;
+		s_map["IndiceVisuel01S03CART"]    = GameVariables::kIndiceVisuel01S03CART;
+		s_map["IndiceVisuel02S06DJED"]    = GameVariables::kIndiceVisuel02S06DJED;
+		s_map["IndiceVisuel03S06TIT"]     = GameVariables::kIndiceVisuel03S06TIT;
+		s_map["IndiceVisuel04S08DJAT"]    = GameVariables::kIndiceVisuel04S08DJAT;
+		s_map["IndiceVisuel05S40TRUIE"]   = GameVariables::kIndiceVisuel05S40TRUIE;
+		s_map["IndiceVisuel06S44PTAH"]    = GameVariables::kIndiceVisuel06S44PTAH;
+		s_map["IndiceVisuel07D63CHEV"]    = GameVariables::kIndiceVisuel07D63CHEV;
+		s_map["IndiceVisuel08A21HERI"]    = GameVariables::kIndiceVisuel08A21HERI;
+		s_map["IndiceVisuel09N03CHAT"]    = GameVariables::kIndiceVisuel09N03CHAT;
+		s_map["IndiceVisuel10N07SENET"]   = GameVariables::kIndiceVisuel10N07SENET;
+	}
+	VarMap::const_iterator it = s_map.find(name);
+	return it != s_map.end() ? it->_value : -1;
+}
+
+void CryOmni3DEngine_Egypt::setGameVar(const Common::String &name, int value) {
+	int idx = gameVarIndex(name);
+	if (idx >= 0) {
+		_gameVariables[idx] = (uint)value;
+	} else {
+		warning("Egypt: setGameVar: unknown variable '%s'", name.c_str());
+	}
+}
 
 bool CryOmni3DEngine_Egypt::runPrototypeWarpScript(int zoneClick, double sourceAlpha, double sourceBeta) {
 	Common::Array<Common::String> blockLines;
@@ -54,7 +316,7 @@ bool CryOmni3DEngine_Egypt::runPrototypeWarpScript(int zoneClick, double sourceA
 		return false;
 	}
 
-	_scriptVariables["zoneclic"] = zoneClick;
+	_gameVariables[GameVariables::kZoneclic] = zoneClick;
 	warning("Egypt: prototype zoneclic=%d for scene %s",
 	        zoneClick, _currentScene.name.c_str());
 
@@ -420,12 +682,12 @@ int CryOmni3DEngine_Egypt::resolveScriptValue(const Common::String &token) const
 	if ((firstChar >= '0' && firstChar <= '9') || firstChar == '-' || firstChar == '+')
 		return atoi(value.c_str());
 
-	Common::HashMap<Common::String, int, Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo>::const_iterator it =
-		_scriptVariables.find(value);
-	if (it != _scriptVariables.end())
-		return it->_value;
+	int idx = gameVarIndex(value);
+	if (idx >= 0)
+		return (int)_gameVariables[idx];
 
-	it = _scriptConstants.find(value);
+	Common::HashMap<Common::String, int, Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo>::const_iterator it =
+		_scriptConstants.find(value);
 	if (it != _scriptConstants.end())
 		return it->_value;
 
@@ -433,12 +695,12 @@ int CryOmni3DEngine_Egypt::resolveScriptValue(const Common::String &token) const
 }
 
 int CryOmni3DEngine_Egypt::getScriptVariableValue(const Common::String &name) const {
-	Common::HashMap<Common::String, int, Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo>::const_iterator it =
-		_scriptVariables.find(name);
-	if (it != _scriptVariables.end())
-		return it->_value;
+	int idx = gameVarIndex(name);
+	if (idx >= 0)
+		return (int)_gameVariables[idx];
 
-	it = _scriptConstants.find(name);
+	Common::HashMap<Common::String, int, Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo>::const_iterator it =
+		_scriptConstants.find(name);
 	if (it != _scriptConstants.end())
 		return it->_value;
 
@@ -483,9 +745,16 @@ void CryOmni3DEngine_Egypt::setScriptVariable(const Common::String &assignment) 
 	else
 		result = rhs;
 
-	_scriptVariables[name] = result;
-	warning("Egypt: script variable %s=%d", name.c_str(), _scriptVariables[name]);
-	if (name.equalsIgnoreCase("Level"))
+	int idx = gameVarIndex(name);
+	if (idx < 0) {
+		warning("Egypt: setScriptVariable: unknown variable '%s'", name.c_str());
+		return;
+	}
+
+	_gameVariables[idx] = (uint)result;
+	warning("Egypt: script variable %s=%d", name.c_str(), result);
+
+	if (idx == GameVariables::kLevel)
 		resetScriptTimer();
 
 	// EXE: the PRENDRE handler does objectValues[objectId]++ to mark the object as taken.
@@ -493,15 +762,16 @@ void CryOmni3DEngine_Egypt::setScriptVariable(const Common::String &assignment) 
 	// handler is bypassed, so the object variable stays at 0 and the pickup zone can
 	// re-activate after the item is stored.  Mirror the increment here for any
 	// assignment that places a known object into main.
-	if (name.equalsIgnoreCase("main") && result > 0) {
+	if (idx == GameVariables::kMain && result > 0) {
 		Common::HashMap<Common::String, int,
 		    Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo>::const_iterator cit;
 		for (cit = _scriptConstants.begin(); cit != _scriptConstants.end(); ++cit) {
 			if (cit->_value == result && cit->_key.hasPrefixIgnoreCase("Objet")) {
 				const Common::String varName = cit->_key.substr(5); // strip "Objet"
-				_scriptVariables[varName] = getScriptVariableValue(varName) + 1;
+				const int newVal = getScriptVariableValue(varName) + 1;
+				setGameVar(varName, newVal);
 				warning("Egypt: auto-increment %s=%d (main set via script to %d)",
-				        varName.c_str(), _scriptVariables[varName], result);
+				        varName.c_str(), newVal, result);
 				break;
 			}
 		}

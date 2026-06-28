@@ -397,12 +397,12 @@ bool CryOmni3DEngine_Egypt::displayToolbar(const Graphics::Surface *original) {
 
 						if (held == 0) {
 							if (slotVal != 0) {
-								_scriptVariables["main"] = slotVal;
-								_scriptVariables[slotKey] = 0;
+								_gameVariables[GameVariables::kMain] = slotVal;
+								setGameVar(slotKey, 0);
 							}
 						} else if (slotVal == 0) {
-							_scriptVariables[slotKey] = held;
-							_scriptVariables["main"] = 0;
+							setGameVar(slotKey, held);
+							_gameVariables[GameVariables::kMain] = 0;
 						} else {
 							// Both non-zero: check Etoupe-on-Lampe special case.
 							const int etoupe = getScriptVariableValue("ObjetEtoupe");
@@ -410,11 +410,11 @@ bool CryOmni3DEngine_Egypt::displayToolbar(const Graphics::Surface *original) {
 							if (etoupe > 0 && lampe > 0 &&
 							    held == etoupe && slotVal == lampe &&
 							    getScriptVariableValue("Etoupe_Sur_Lampe") == 0) {
-								_scriptVariables["Etoupe_Sur_Lampe"] = 1;
+								_gameVariables[GameVariables::kEtoupe_Sur_Lampe] = 1;
 								warning("Egypt: Etoupe_Sur_Lampe activated");
 							} else {
-								_scriptVariables["main"] = slotVal;
-								_scriptVariables[slotKey] = held;
+								_gameVariables[GameVariables::kMain] = slotVal;
+								setGameVar(slotKey, held);
 							}
 						}
 

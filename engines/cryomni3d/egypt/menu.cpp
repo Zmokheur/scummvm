@@ -543,9 +543,9 @@ CryOmni3DEngine_Egypt::EgyptStartupMode CryOmni3DEngine_Egypt::showMainMenu() {
 Common::String CryOmni3DEngine_Egypt::startStoryModePrototype() {
 	clearPendingWarpRequest();
 	_pendingWarpTarget.clear();
-	_scriptVariables["FlagVisite"] = 0;
-	_scriptVariables["main"] = 0;
-	_scriptVariables["Level"] = 1;
+	_gameVariables[GameVariables::kFlagVisite] = 0;
+	_gameVariables[GameVariables::kMain] = 0;
+	_gameVariables[GameVariables::kLevel] = 1;
 
 	Common::String entryScene = "S01";
 	if (kEgyptStartupDebugStoryEntryEnabled)
@@ -560,9 +560,9 @@ Common::String CryOmni3DEngine_Egypt::startStoryModePrototype() {
 Common::String CryOmni3DEngine_Egypt::startDebugLevel(int level, const Common::String &scene) {
 	clearPendingWarpRequest();
 	_pendingWarpTarget.clear();
-	_scriptVariables["FlagVisite"] = 0;
-	_scriptVariables["main"] = 0;
-	_scriptVariables["Level"] = level;
+	_gameVariables[GameVariables::kFlagVisite] = 0;
+	_gameVariables[GameVariables::kMain] = 0;
+	_gameVariables[GameVariables::kLevel] = level;
 	warning("EGYPT_MENU: selection=DebugLevel%d entryScene=%s", level, scene.c_str());
 	return scene;
 }
@@ -570,9 +570,9 @@ Common::String CryOmni3DEngine_Egypt::startDebugLevel(int level, const Common::S
 Common::String CryOmni3DEngine_Egypt::startVisitMode() {
 	clearPendingWarpRequest();
 	_pendingWarpTarget.clear();
-	_scriptVariables["FlagVisite"] = 1;
-	_scriptVariables["main"] = 0;
-	_scriptVariables["Level"] = 0;
+	_gameVariables[GameVariables::kFlagVisite] = 1;
+	_gameVariables[GameVariables::kMain] = 0;
+	_gameVariables[GameVariables::kLevel] = 0;
 	_currentContextName = "JOUR";
 
 	warning("EGYPT_MENU: selection=Visit entryScene=JOUR context=JOUR FlagVisite=1 Level=0 reason=visit_mode_no_story_chapter");
