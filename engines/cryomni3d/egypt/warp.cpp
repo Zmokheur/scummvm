@@ -423,6 +423,11 @@ int CryOmni3DEngine_Egypt::consumeArrivalPanoramaX(double &alpha, double &beta, 
 		hasAngles = true;
 		alpha = _pendingRuntimeResolved.normalizedFinalAlpha;
 		beta = _pendingRuntimeResolved.finalBeta;
+	} else if (!_pendingWarp.active && _currentViewAnglesAvailable) {
+		// Entrée initiale dans NUIT/JOUR : pas de warp actif, angles hérités du menu (EXE 0x4076fa).
+		hasAngles = true;
+		alpha = _currentViewAlpha;
+		beta = _currentViewBeta;
 	}
 	return arrivalPanoramaX;
 }

@@ -589,13 +589,15 @@ Common::String CryOmni3DEngine_Egypt::startStoryModePrototype() {
 	_gameVariables[GameVariables::kMain] = 0;
 	_gameVariables[GameVariables::kLevel] = 1;
 
-	Common::String entryScene = "S01";
+	// EXE 0x4076fa/0x407704: angles hardcodés avant la boucle menu.
+	// NUIT hérite de ces angles sans appliquer de centrage.
+	setRuntimeViewAngles(1.570000052, 0.425999999, true);
+
+	Common::String entryScene = "NUIT";
 	if (kEgyptStartupDebugStoryEntryEnabled)
 		entryScene = kEgyptStartupDebugStoryEntryScene;
 
-	warning("EGYPT_MENU: selection=Story entryScene=%s context=prototype reason=story_prototype_entry",
-	        entryScene.c_str());
-	warning("Egypt: starting story mode through prototype entry scene %s", entryScene.c_str());
+	warning("EGYPT_MENU: selection=Story entryScene=%s FlagVisite=0 Level=1", entryScene.c_str());
 	return entryScene;
 }
 
@@ -618,9 +620,12 @@ Common::String CryOmni3DEngine_Egypt::startVisitMode() {
 	_gameVariables[GameVariables::kFlagVisite] = 1;
 	_gameVariables[GameVariables::kMain] = 0;
 	_gameVariables[GameVariables::kLevel] = 0;
-	_currentContextName = "JOUR";
 
-	warning("EGYPT_MENU: selection=Visit entryScene=JOUR context=JOUR FlagVisite=1 Level=0 reason=visit_mode_no_story_chapter");
+	// Même angles hardcodés que le mode histoire (EXE 0x4076fa/0x407704).
+	// JOUR hérite de ces angles sans appliquer de centrage.
+	setRuntimeViewAngles(1.570000052, 0.425999999, true);
+
+	warning("EGYPT_MENU: selection=Visit entryScene=JOUR FlagVisite=1 Level=0");
 	return "JOUR";
 }
 
