@@ -31,8 +31,6 @@
 #include "common/textconsole.h"
 #include "common/tokenizer.h"
 
-#include "graphics/font.h"
-#include "graphics/fontman.h"
 #include "graphics/managed_surface.h"
 #include "graphics/surface.h"
 
@@ -590,20 +588,15 @@ void Egypt_Dialog::showText(const Graphics::ManagedSurface &background,
 	if (text.empty())
 		return;
 
-	const Graphics::Font *font = FontMan.getFontByUsage(Graphics::FontManager::kConsoleFont);
-	if (!font)
-		font = FontMan.getFontByUsage(Graphics::FontManager::kGUIFont);
-	if (!font) {
-		warning("Egypt: dialogue: no font available, skipping text display");
-		g_system->delayMillis(1500);
-		return;
-	}
+	// Original CRYOFONT (provisional slot, see kSlotDialog)
+	Egypt_FontManager &fm = _engine->_fontManager;
+	fm.setCurrentFont(Egypt_FontManager::kSlotDialog);
 
 	// Word-wrap the text to fit in the dialogue column.
 	Common::Array<Common::String> lines;
-	font->wordWrapText(text, kDialogTextWidth, lines);
+	fm.wordWrap(text, kDialogTextWidth, lines);
 
-	const int lineH    = font->getFontHeight() + 2;
+	const int lineH    = fm.getFontHeight() + 2;
 	const int totalH   = (int)lines.size() * lineH + kDialogPadding * 2;
 	const int boxTop   = MAX(kDialogBoxTop, kScreenHeight - totalH - 4);
 	const Graphics::PixelFormat &fmt = g_system->getScreenFormat();
@@ -709,12 +702,12 @@ void Egypt_Dialog::showText(const Graphics::ManagedSurface &background,
 			blitSpriteFrame(surface, _spa, idleFrame);
 
 		const uint32 bgColor = fmt.RGBToColor(16, 16, 16);
-		const uint32 fgColor = fmt.RGBToColor(255, 255, 255);
 		surface.fillRect(Common::Rect(0, boxTop, 640, 480), bgColor);
 
+		fm.setForeColor(fmt.RGBToColor(255, 255, 255));
 		int y = boxTop + kDialogPadding;
 		for (uint li = 0; li < visibleLines.size(); ++li, y += lineH)
-			font->drawString(&surface, visibleLines[li], kDialogTextX, y, kDialogTextWidth, fgColor);
+			fm.displayStr(surface, kDialogTextX, y, visibleLines[li]);
 
 		g_system->copyRectToScreen(surface.getPixels(), surface.pitch, 0, 0, kScreenWidth, kScreenHeight);
 		g_system->updateScreen();
@@ -737,15 +730,11 @@ int Egypt_Dialog::showChoices(const Graphics::ManagedSurface &background,
 	if (choices.empty())
 		return -1;
 
-	const Graphics::Font *font = FontMan.getFontByUsage(Graphics::FontManager::kConsoleFont);
-	if (!font)
-		font = FontMan.getFontByUsage(Graphics::FontManager::kGUIFont);
-	if (!font) {
-		warning("Egypt: dialogue: no font for choices");
-		return 0;
-	}
+	// Original CRYOFONT (provisional slot, see kSlotDialog)
+	Egypt_FontManager &fm = _engine->_fontManager;
+	fm.setCurrentFont(Egypt_FontManager::kSlotDialog);
 
-	const int lineH      = font->getFontHeight() + 3;
+	const int lineH      = fm.getFontHeight() + 3;
 	const int totalH     = (int)choices.size() * lineH + kDialogPadding * 2;
 	const int boxTop     = MAX(kDialogBoxTop, kScreenHeight - totalH - 4);
 	const Graphics::PixelFormat &fmt = g_system->getScreenFormat();
@@ -759,8 +748,10 @@ int Egypt_Dialog::showChoices(const Graphics::ManagedSurface &background,
 
 	Graphics::ManagedSurface surface(640, 480, fmt);
 	const uint32 bgColor    = fmt.RGBToColor(16, 16, 16);
-	const uint32 fgNormal   = fmt.RGBToColor(255, 255, 80);
-	const uint32 fgHovered  = fmt.RGBToColor(255, 220, 40);
+	// EXE UI convention: white text, orange (224,112,0) when highlighted
+	// (color globals 0x4d9974 / 0x4d6070)
+	const uint32 fgNormal   = fmt.RGBToColor(255, 255, 255);
+	const uint32 fgHovered  = fmt.RGBToColor(224, 112, 0);
 
 	int hoveredIdx = -1;
 
@@ -789,9 +780,8 @@ int Egypt_Dialog::showChoices(const Graphics::ManagedSurface &background,
 		surface.fillRect(Common::Rect(0, boxTop, 640, 480), bgColor);
 
 		for (uint i = 0; i < choices.size(); ++i) {
-			const uint32 color = ((int)i == hoveredIdx) ? fgHovered : fgNormal;
-			font->drawString(&surface, choices[i].displayText,
-			                 kDialogTextX, rects[i].top, kDialogTextWidth, color);
+			fm.setForeColor(((int)i == hoveredIdx) ? fgHovered : fgNormal);
+			fm.displayStr(surface, kDialogTextX, rects[i].top, choices[i].displayText);
 		}
 
 		g_system->copyRectToScreen(surface.getPixels(), surface.pitch, 0, 0, kScreenWidth, kScreenHeight);

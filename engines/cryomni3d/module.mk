@@ -45,6 +45,7 @@ MODULE_OBJS += \
 	egypt/script.o \
 	egypt/sprite.o \
 	egypt/support/cpx5.o \
+	egypt/support/font_manager.o \
 	egypt/support/image_loader.o \
 	egypt/toolbar.o \
 	egypt/warp.o

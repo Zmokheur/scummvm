@@ -26,7 +26,6 @@
 #include "common/textconsole.h"
 
 #include "graphics/font.h"
-#include "graphics/fontman.h"
 #include "graphics/managed_surface.h"
 #include "graphics/surface.h"
 
@@ -266,25 +265,23 @@ bool Egypt_Toolbar::display(const Graphics::Surface *original) {
 
 			// Visit mode: draw a tooltip label above the hovered slot (EXE 0x808683).
 			// Only the first 6 slots have a mapped site (F1-F6 destinations).
+			// Text style from EXE 0x80974c/0x80976b: toolbar font slot 10
+			// (FONT11.CRF), black shadow pass then white pass, no bubble.
+			// TODO Phase D: confirm the exact label position from 0x8096xx.
 			if (position == 0 && inVisitMode && hoveredSlot >= 0 && hoveredSlot < 6) {
-				const Graphics::Font *font =
-				    FontMan.getFontByUsage(Graphics::FontManager::kGUIFont);
-				if (font) {
-					const Common::String label(kLevelStartScenes[hoveredSlot]);
-					const int textW = font->getStringWidth(label);
-					const int fontH = font->getFontHeight();
-					// Centre above the slot; clamp to toolbar bounds
-					const int slotCX = kSlotX0 + hoveredSlot * kSlotStep + 15;
-					const int textX  = CLIP<int>(slotCX - textW / 2, 2, 638 - textW);
-					const int textY  = CLIP<int>(kYSlot - fontH - 2, 1, kToolbarH - fontH - 1);
-					const Common::Rect bubble(textX - 4, textY - 2,
-					                          textX + textW + 4, textY + fontH + 2);
-					dest.fillRect(bubble,  dest.format.RGBToColor( 20,  18,  14));
-					dest.frameRect(bubble, dest.format.RGBToColor(188, 154,  84));
-					font->drawString(&dest, label, textX, textY,
-					                 dest.w - textX,
-					                 dest.format.RGBToColor(244, 232, 204));
-				}
+				Egypt_FontManager &fm = _engine->_fontManager;
+				fm.setCurrentFont(Egypt_FontManager::kSlotToolbar);
+				const Common::String label(kLevelStartScenes[hoveredSlot]);
+				const int textW = (int)fm.getStrWidth(label);
+				const int fontH = fm.getFontHeight();
+				// Centre above the slot; clamp to toolbar bounds
+				const int slotCX = kSlotX0 + hoveredSlot * kSlotStep + 15;
+				const int textX  = CLIP<int>(slotCX - textW / 2, 2, 638 - textW);
+				const int textY  = CLIP<int>(kYSlot - fontH - 2, 1, kToolbarH - fontH - 1);
+				fm.setForeColor(dest.format.RGBToColor(0, 0, 0));
+				fm.displayStr(dest, textX + 1, textY + 1, label);
+				fm.setForeColor(dest.format.RGBToColor(255, 255, 255));
+				fm.displayStr(dest, textX, textY, label);
 			}
 		}
 

@@ -36,6 +36,20 @@ void CryOmni3DEngine_Egypt::setupSprites() {
 	setInterfaceCursor(kEgyptCursorDefault);
 }
 
+void CryOmni3DEngine_Egypt::setupFonts() {
+	// EXE loader 0x80C4B0: loop esi=1..11 loading ".\SPRITE\font0%d.crf"
+	// (esi < 10) / ".\SPRITE\font%d.crf" into font slots esi-1, so slot N
+	// (0-based) = FONT{N+1:02}.CRF. The EXE also opens font.spr/charset.spr/
+	// font1.spr/font2.spr but no text-drawing path reads those buffers
+	// (charset.spr is even absent from the CD): legacy code, not ported.
+	Common::Array<Common::Path> fonts;
+	for (int i = 1; i <= 11; i++)
+		fonts.push_back(getFilePath(kFileTypeFont, Common::String::format("font%02d.crf", i)));
+	_fontManager.loadFonts(fonts);
+
+	debugC(kDebugFile, "Egypt: loaded %d CRYOFONT font(s)", 11);
+}
+
 bool CryOmni3DEngine_Egypt::setInterfaceCursor(uint spriteId) const {
 	return _spriteLoader.setInterfaceCursor(spriteId);
 }

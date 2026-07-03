@@ -95,6 +95,7 @@ Common::Error CryOmni3DEngine_Egypt::run() {
 	if (!loadMessageLabels())
 		warning("Egypt: message labels unavailable, hover texts will be empty");
 	setupSprites();
+	setupFonts();
 
 	// Launcher "Load game" support (kSupportsLoadingDuringStartup)
 	if (ConfMan.hasKey("save_slot"))
@@ -297,6 +298,10 @@ Common::Path CryOmni3DEngine_Egypt::getFilePath(EgyptFileType type, const Common
 
 	case kFileTypeVoice:
 		return Common::Path(Common::String::format("sound/FR/%s.apc", name.c_str()));
+
+	case kFileTypeFont:
+		// EXE builds ".\SPRITE\font0%d.crf" / ".\SPRITE\font%d.crf" (0x80C4B0)
+		return Common::Path(Common::String::format("SPRITE/%s", name.c_str()));
 
 	default:
 		return Common::Path();

@@ -29,8 +29,6 @@
 #include "cryomni3d/egypt/support/image_loader.h"
 #include "cryomni3d/image/hnm.h"
 
-#include "graphics/font.h"
-#include "graphics/fontman.h"
 #include "graphics/managed_surface.h"
 #include "graphics/palette.h"
 #include "graphics/surface.h"
@@ -141,18 +139,14 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpFixed(const Graphics::Surface *fra
 
 		const Common::String hoverText = getHoverTextForZone(hoveredZone);
 		if (!hoverText.empty()) {
-			const Graphics::Font *font = FontMan.getFontByUsage(Graphics::FontManager::kGUIFont);
-			if (font) {
-				const int textWidth = font->getStringWidth(hoverText);
-				const int textX = CLIP<int>(mouse.x + 18, 8, compositedFrame.w - textWidth - 12);
-				const int textY = CLIP<int>(mouse.y + 14, 8, compositedFrame.h - font->getFontHeight() - 10);
-				const Common::Rect bubble(textX - 6, textY - 3,
-				                          textX + textWidth + 6, textY + font->getFontHeight() + 4);
-				compositedFrame.fillRect(bubble, compositedFrame.format.RGBToColor(20, 18, 14));
-				compositedFrame.frameRect(bubble, compositedFrame.format.RGBToColor(188, 154, 84));
-				font->drawString(&compositedFrame, hoverText, textX, textY,
-				                 compositedFrame.w - textX, compositedFrame.format.RGBToColor(244, 232, 204));
-			}
+			// EXE 0x815e50: hover label with font slot 9 (FONT10.CRF),
+			// orange shadow at (mouseX+12, mouseY+1) then white text at
+			// (mouseX+11, mouseY); no bubble, glyph-level clipping only.
+			_fontManager.setCurrentFont(Egypt_FontManager::kSlotHoverLabel);
+			_fontManager.setForeColor(compositedFrame.format.RGBToColor(224, 112, 0));
+			_fontManager.displayStr(compositedFrame, mouse.x + 12, mouse.y + 1, hoverText);
+			_fontManager.setForeColor(compositedFrame.format.RGBToColor(255, 255, 255));
+			_fontManager.displayStr(compositedFrame, mouse.x + 11, mouse.y, hoverText);
 		}
 
 		g_system->copyRectToScreen(compositedFrame.getPixels(), compositedFrame.pitch,
@@ -438,18 +432,13 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpRotation(const Graphics::Surface *
 			if (_spriteLoader.hasPendingOverlay())
 				_spriteLoader.applyOverlayToSurface(*compositedFrame.surfacePtr());
 			if (!hoverText.empty()) {
-				const Graphics::Font *font = FontMan.getFontByUsage(Graphics::FontManager::kGUIFont);
-				if (font) {
-					const int textWidth = font->getStringWidth(hoverText);
-					const int textX = CLIP<int>(mouse.x + 18, 8, compositedFrame.w - textWidth - 12);
-					const int textY = CLIP<int>(mouse.y + 14, 8, compositedFrame.h - font->getFontHeight() - 10);
-					const Common::Rect bubble(textX - 6, textY - 3,
-					                          textX + textWidth + 6, textY + font->getFontHeight() + 4);
-					compositedFrame.fillRect(bubble, compositedFrame.format.RGBToColor(20, 18, 14));
-					compositedFrame.frameRect(bubble, compositedFrame.format.RGBToColor(188, 154, 84));
-					font->drawString(&compositedFrame, hoverText, textX, textY,
-					                 compositedFrame.w - textX, compositedFrame.format.RGBToColor(244, 232, 204));
-				}
+				// EXE 0x815e50: font slot 9, orange shadow then white text
+				// at mouse position (see the fixed-view variant above)
+				_fontManager.setCurrentFont(Egypt_FontManager::kSlotHoverLabel);
+				_fontManager.setForeColor(compositedFrame.format.RGBToColor(224, 112, 0));
+				_fontManager.displayStr(compositedFrame, mouse.x + 12, mouse.y + 1, hoverText);
+				_fontManager.setForeColor(compositedFrame.format.RGBToColor(255, 255, 255));
+				_fontManager.displayStr(compositedFrame, mouse.x + 11, mouse.y, hoverText);
 			}
 
 			g_system->copyRectToScreen(compositedFrame.getPixels(), compositedFrame.pitch, 0, 0,

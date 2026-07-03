@@ -40,6 +40,7 @@
 #include "cryomni3d/egypt/scene.h"
 #include "cryomni3d/egypt/script.h"
 #include "cryomni3d/egypt/sprite.h"
+#include "cryomni3d/egypt/support/font_manager.h"
 #include "cryomni3d/egypt/toolbar.h"
 #include "cryomni3d/egypt/warp.h"
 
@@ -70,7 +71,8 @@ enum EgyptFileType {
 	kFileTypeLevelTxt,         // ref/FR/Level.txt (dialogue trees)
 	kFileTypeDocRecords,       // REF/FR/ESPDOC.TXT
 	kFileTypeDocTree,          // REF/FR/ESPARBO.TXT
-	kFileTypeVoice             // sound/FR/<name>.apc
+	kFileTypeVoice,            // sound/FR/<name>.apc
+	kFileTypeFont              // SPRITE/<name> (FONT01.CRF..FONT11.CRF, EXE loader 0x80C4B0)
 };
 
 struct EgyptMessageEntry {
@@ -123,6 +125,7 @@ private:
 
 	void resetGameVariables();
 	void setupSprites();
+	void setupFonts();
 
 	// saveload.cpp
 	bool saveGameToSlot(uint saveNum, const Common::String &desc);
@@ -224,6 +227,7 @@ private:
 	EgyptResolvedCentrage _pendingRuntimeResolved;
 	Common::Array<EgyptCentrage> _currentCentrages;
 	Egypt_SpriteLoader _spriteLoader;
+	Egypt_FontManager _fontManager;
 	Egypt_Toolbar _toolbar;
 	Egypt_Documentation _documentation;
 	Egypt_Dialog _dialog;
