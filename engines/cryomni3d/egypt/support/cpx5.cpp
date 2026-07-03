@@ -19,13 +19,14 @@
  *
  */
 
-#include "cryomni3d/image/cpx5.h"
+#include "cryomni3d/egypt/support/cpx5.h"
 
 #include "common/endian.h"
 #include "common/stream.h"
 #include "common/textconsole.h"
 
-namespace Image {
+namespace CryOmni3D {
+namespace Egypt {
 
 bool Cpx5Decoder::decompress(Common::SeekableReadStream &stream, Common::Array<byte> &output) {
 	if (stream.size() < 12) {
@@ -113,4 +114,5 @@ bool Cpx5Decoder::decompress(Common::SeekableReadStream &stream, Common::Array<b
 	return true;
 }
 
-} // End of namespace Image
+} // End of namespace Egypt
+} // End of namespace CryOmni3D

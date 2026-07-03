@@ -19,6 +19,9 @@
  *
  */
 
+#include "common/config-manager.h"
+#include "common/debug.h"
+#include "common/ptr.h"
 #include "common/file.h"
 #include "common/system.h"
 #include "common/textconsole.h"
@@ -36,8 +39,14 @@
 namespace CryOmni3D {
 namespace Egypt {
 
+const char *const kLevelStartScenes[6] = { "S00", "D01", "A02", "N01A", "M01", "K43" };
+
 CryOmni3DEngine_Egypt::CryOmni3DEngine_Egypt(OSystem *syst,
 		const CryOmni3DGameDescription *gamedesc) : CryOmni3DEngine(syst, gamedesc),
+		_toolbar(this),
+		_documentation(this),
+		_dialog(this),
+		_script(this),
 		_currentContextName("NUIT"),
 		_lastHoveredZoneId(uint(-1)) {
 	_pendingWarp.active = false;
@@ -45,10 +54,6 @@ CryOmni3DEngine_Egypt::CryOmni3DEngine_Egypt(OSystem *syst,
 }
 
 CryOmni3DEngine_Egypt::~CryOmni3DEngine_Egypt() {
-	for (Common::Array<EgyptInterfaceSprite *>::iterator it = _interfaceSprites.begin();
-	     it != _interfaceSprites.end(); ++it) {
-		delete *it;
-	}
 	_crossFadeOldScreen.free();
 }
 
@@ -73,25 +78,41 @@ void CryOmni3DEngine_Egypt::resetGameVariables() {
 	_currentViewAnglesAvailable = false;
 	_currentViewAlpha = 0.0;
 	_currentViewBeta = 0.0;
-	_dialogueLevelLoaded = false;
+	_dialog.resetLevelCache();
 }
 
 Common::Error CryOmni3DEngine_Egypt::run() {
 	CryOmni3DEngine::run();
 
 	const Graphics::PixelFormat egyptFormat = Graphics::PixelFormat::createFormatRGBA32();
-	initGraphics(640, 480, &egyptFormat);
-	warning("Egypt: current screen format uses %d byte(s) per pixel",
+	initGraphics(kScreenWidth, kScreenHeight, &egyptFormat);
+	debugC(kDebugFile, "Egypt: current screen format uses %d byte(s) per pixel",
 	        g_system->getScreenFormat().bytesPerPixel);
 	fillSurface(0);
 	syncSoundSettings();
-	loadSymbolDefinitions(Common::Path("REF/FR/EGYPTE.DEF"));
-	loadMessageLabels();
+	if (!loadSymbolDefinitions(getFilePath(kFileTypeGameDef)))
+		error("Egypt: cannot load required symbol definitions from REF/FR/EGYPTE.DEF");
+	if (!loadMessageLabels())
+		warning("Egypt: message labels unavailable, hover texts will be empty");
 	setupSprites();
 
-	playStartupLogoIfPresent();
+	// Launcher "Load game" support (kSupportsLoadingDuringStartup)
+	if (ConfMan.hasKey("save_slot"))
+		_pendingLoadSlot = ConfMan.getInt("save_slot");
+	else
+		playStartupLogoIfPresent();
 
 	while (!shouldAbort()) {
+		Common::String sceneName;
+
+		if (_pendingLoadSlot >= 0) {
+			// Load requested from the launcher or from the GMM in a menu
+			sceneName = applyPendingLoad();
+			if (sceneName.empty())
+				continue;
+			_gameVariables[GameVariables::kEndGame] = 0;
+		} else {
+
 		EgyptStartupMode nextMode = showMainMenu();
 		if (nextMode == EgyptStartupMode::kQuit)
 			break;
@@ -99,7 +120,6 @@ Common::Error CryOmni3DEngine_Egypt::run() {
 		// Always clear EndGame so a previous session ending doesn't pollute the new one.
 		_gameVariables[GameVariables::kEndGame] = 0;
 
-		Common::String sceneName;
 		switch (nextMode) {
 		case EgyptStartupMode::kResume:
 			// Re-enter the game without touching variables.
@@ -112,30 +132,24 @@ Common::Error CryOmni3DEngine_Egypt::run() {
 			sceneName = startVisitMode();
 			break;
 		case EgyptStartupMode::kDocumentation:
-			startDocumentationMode();
+			_documentation.runStandaloneMode();
 			break;
 		case EgyptStartupMode::kDebugLevel1:
-			sceneName = startDebugLevel(1, "S00");
-			break;
 		case EgyptStartupMode::kDebugLevel2:
-			sceneName = startDebugLevel(2, "D01");
-			break;
 		case EgyptStartupMode::kDebugLevel3:
-			sceneName = startDebugLevel(3, "A02");
-			break;
 		case EgyptStartupMode::kDebugLevel4:
-			sceneName = startDebugLevel(4, "N01A");
-			break;
 		case EgyptStartupMode::kDebugLevel5:
-			sceneName = startDebugLevel(5, "M01");
+		case EgyptStartupMode::kDebugLevel6: {
+			const int level = (int)nextMode - (int)EgyptStartupMode::kDebugLevel1 + 1;
+			sceneName = startDebugLevel(level, kLevelStartScenes[level - 1]);
 			break;
-		case EgyptStartupMode::kDebugLevel6:
-			sceneName = startDebugLevel(6, "K43");
-			break;
+		}
 		case EgyptStartupMode::kMainMenu:
 		case EgyptStartupMode::kQuit:
 			break;
 		}
+
+		} // end of menu branch
 
 		while (!shouldAbort() && !sceneName.empty()) {
 			// Remember whether this scene is the eye-warp destination
@@ -144,15 +158,21 @@ Common::Error CryOmni3DEngine_Egypt::run() {
 
 			loadScene(sceneName);
 
+			if (_pendingLoadSlot >= 0) {
+				// GMM load during gameplay: switch to the loaded state.
+				sceneName = applyPendingLoad();
+				continue;
+			}
+
 			if (!_pendingWarpTarget.empty()) {
-				// Navigation from inside this scene (zone click, script, toolbar F-key…).
+				// Navigation from inside this scene (zone click, script, toolbar F-key...).
 				// If we were inside an eye scene and the eye scene itself navigated
 				// somewhere, discard the return: we follow the new navigation.
 				if (isEyeScene)
 					_pendingReturnScene.clear();
 				sceneName = _pendingWarpTarget;
 			} else if (!_pendingReturnScene.empty()) {
-				// Eye-warp scene ended without further navigation → return to origin.
+				// Eye-warp scene ended without further navigation -> return to origin.
 				sceneName = _pendingReturnScene;
 				_pendingReturnScene.clear();
 			} else {
@@ -163,11 +183,11 @@ Common::Error CryOmni3DEngine_Egypt::run() {
 		// Update resume state based on how the session ended.
 		if (_isPlaying) {
 			if (getScriptVariableValue("EndGame") != 0) {
-				// Game ended normally — no longer resumable.
+				// Game ended normally - no longer resumable.
 				_isPlaying = false;
 				_savedSceneName.clear();
 			} else if (!sceneName.empty()) {
-				// Session interrupted (dead-end or future back-to-menu action) — save position.
+				// Session interrupted (dead-end or future back-to-menu action) - save position.
 				_savedSceneName = sceneName;
 			}
 		}
@@ -207,36 +227,80 @@ bool CryOmni3DEngine_Egypt::loadSymbolDefinitions(const Common::Path &filename) 
 		}
 	}
 
-	warning("Egypt: loaded %u script constant(s) from %s",
+	debugC(kDebugFile, "Egypt: loaded %u script constant(s) from %s",
 	        _scriptConstants.size(), filename.toString(Common::Path::kNativeSeparator).c_str());
 	return true;
 }
 
-Common::Path CryOmni3DEngine_Egypt::resolveSceneDefinitionPath(const Common::String &sceneName) const {
-	Common::String normalizedName = sceneName;
-	normalizedName.replace('\\', '/');
+// Central asset path resolution (Versailles getFilePath pattern):
+// call sites never build asset paths by hand.
+Common::Path CryOmni3DEngine_Egypt::getFilePath(EgyptFileType type, const Common::String &name) const {
+	switch (type) {
+	case kFileTypeGameDef:
+		return Common::Path("REF/FR/EGYPTE.DEF");
 
-	// EXE order: ref\FR\ first (0x411099), then sprite\Level%d\ (0x41112e)
-	Common::Path refPath(Common::String::format("REF/FR/%s.DEF", normalizedName.c_str()));
-	if (Common::File::exists(refPath))
-		return refPath;
+	case kFileTypeSceneDef: {
+		Common::String normalizedName = name;
+		normalizedName.replace('\\', '/');
 
-	const int currentLevel = getScriptVariableValue("Level");
-	if (currentLevel >= 1 && currentLevel <= 6) {
-		Common::Path levelDefPath(Common::String::format("SPRITE/LEVEL%d/%s.DEF",
-		                                                 currentLevel, normalizedName.c_str()));
-		if (Common::File::exists(levelDefPath))
-			return levelDefPath;
+		// EXE order: ref\FR\ first (0x411099), then sprite\Level%d\ (0x41112e)
+		Common::Path refPath(Common::String::format("REF/FR/%s.DEF", normalizedName.c_str()));
+		if (Common::File::exists(refPath))
+			return refPath;
+
+		const int currentLevel = getScriptVariableValue("Level");
+		if (currentLevel >= 1 && currentLevel <= 6) {
+			Common::Path levelDefPath(Common::String::format("SPRITE/LEVEL%d/%s.DEF",
+			                                                 currentLevel, normalizedName.c_str()));
+			if (Common::File::exists(levelDefPath))
+				return levelDefPath;
+		}
+
+		for (int level = 1; level <= 6; ++level) {
+			Common::Path levelDefPath(Common::String::format("SPRITE/LEVEL%d/%s.DEF",
+			                                                 level, normalizedName.c_str()));
+			if (Common::File::exists(levelDefPath))
+				return levelDefPath;
+		}
+
+		return Common::Path(Common::String::format("SPRITE/LEVEL1/%s.DEF", normalizedName.c_str()));
 	}
 
-	for (int level = 1; level <= 6; ++level) {
-		Common::Path levelDefPath(Common::String::format("SPRITE/LEVEL%d/%s.DEF",
-		                                                 level, normalizedName.c_str()));
-		if (Common::File::exists(levelDefPath))
-			return levelDefPath;
+	case kFileTypeWarp:
+		return Common::Path(Common::String::format("WARP/%s", name.c_str()));
+
+	case kFileTypeHnm: {
+		// HNM clips live in HNM/ with localized ones in HNM/FR/
+		Common::Path path(Common::String::format("HNM/%s.HNS", name.c_str()));
+		if (Common::File::exists(path))
+			return path;
+		path = Common::Path(Common::String::format("HNM/FR/%s.HNS", name.c_str()));
+		if (Common::File::exists(path))
+			return path;
+		return Common::Path();
 	}
 
-	return Common::Path(Common::String::format("SPRITE/LEVEL1/%s.DEF", normalizedName.c_str()));
+	case kFileTypeSpriteImage:
+		return Common::Path(Common::String::format("SPRITE/%s", name.c_str()));
+
+	case kFileTypeInterfaceSprites:
+		return Common::Path("SPRITE/INTERFAC.SPR");
+
+	case kFileTypeLevelTxt:
+		return Common::Path("ref/FR/Level.txt");
+
+	case kFileTypeDocRecords:
+		return Common::Path("REF/FR/ESPDOC.TXT");
+
+	case kFileTypeDocTree:
+		return Common::Path("REF/FR/ESPARBO.TXT");
+
+	case kFileTypeVoice:
+		return Common::Path(Common::String::format("sound/FR/%s.apc", name.c_str()));
+
+	default:
+		return Common::Path();
+	}
 }
 
 void CryOmni3DEngine_Egypt::loadScene(const Common::String &sceneName) {
@@ -250,19 +314,14 @@ void CryOmni3DEngine_Egypt::loadScene(const Common::String &sceneName) {
 	_pendingRuntimeArrivalPrepared = false;
 	_pendingRuntimeMatchedCentrage.clear();
 	_pendingRuntimeResolved = EgyptResolvedCentrage();
-	_sceneOverlayData.clear();
-	_sceneOverlayCatalog.clear();
-	_pendingOverlayPixels.clear();
-	_hasPendingOverlay = false;
-	_overlayDirty = false;
-	_sceneSprPixels.clear();
-	_sceneSprDirty = false;
+	_spriteLoader.resetSceneState();
+	_script.resetSceneState();
 	_autoActivationZones.clear();
 
 	if (_pendingWarp.viaHnm && !_pendingWarp.hnmName.empty())
 		executeHnmSequence(_pendingWarp.hnmName);
 
-	Common::Path scenePath = resolveSceneDefinitionPath(scene);
+	Common::Path scenePath = getFilePath(kFileTypeSceneDef, scene);
 	parseSceneDefinition(scenePath, scene);
 
 	if (!_pendingWarp.toContext.empty())
@@ -271,20 +330,20 @@ void CryOmni3DEngine_Egypt::loadScene(const Common::String &sceneName) {
 		_currentContextName = scene;
 
 	_currentScene.contextName = _currentContextName;
-	warning("Egypt: current context for %s is %s",
+	debugC(kDebugVariable, "Egypt: current context for %s is %s",
 	        _currentScene.name.c_str(), _currentScene.contextName.c_str());
 	prepareRuntimeArrivalView();
 
 	EgyptWarpHeader warpHeader;
-	Common::Path warpPath(Common::String::format("WARP/%s", _currentScene.warpName.c_str()));
+	Common::Path warpPath = getFilePath(kFileTypeWarp, _currentScene.warpName);
 	if (inspectWarpHeader(warpPath, warpHeader)) {
-		warning("Egypt: warp %s tag=%s size=%ux%u audioFlags=%u bpp=%u frameSize=%u firstChunk=%s/%u",
+		debugC(kDebugFile, "Egypt: warp %s tag=%s size=%ux%u audioFlags=%u bpp=%u frameSize=%u firstChunk=%s/%u",
 		        _currentScene.warpName.c_str(), warpHeader.tag.c_str(), warpHeader.width, warpHeader.height,
 		        warpHeader.audioFlags, warpHeader.bpp, warpHeader.frameSize,
 		        warpHeader.firstChunkTag.c_str(), warpHeader.firstChunkSize);
 	}
 
-	warning("Egypt: scene %s uses warp %s and has %u zone(s)",
+	debugC(kDebugFile, "Egypt: scene %s uses warp %s and has %u zone(s)",
 	        _currentScene.name.c_str(), _currentScene.warpName.c_str(), _currentScene.zones.size());
 	_currentSceneAssets = detectSceneAssets(scene, getScriptVariableValue("Level"));
 	resetScriptTimer();
@@ -304,12 +363,12 @@ void CryOmni3DEngine_Egypt::loadScene(const Common::String &sceneName) {
 	// exits the scene loop.  Check here so FIN (which sets EndGame=1 on its first
 	// endinit) returns to the main menu without ever displaying the black TGA.
 	if (getScriptVariableValue("EndGame") != 0) {
-		warning("Egypt: EndGame set in %s, returning to main menu", _currentScene.name.c_str());
+		debugC(kDebugVariable, "Egypt: EndGame set in %s, returning to main menu", _currentScene.name.c_str());
 		return;
 	}
 
 	// Scenes like MORT use a two-pass deferred pattern: the first endinit sets a
-	// counter (tmp 0→1) and takes no action; the second fires aller_hnm_warp/aller_warp.
+	// counter (tmp 0->1) and takes no action; the second fires aller_hnm_warp/aller_warp.
 	// These scenes have no interactive zones and no timer script, so the display loop
 	// would never call runEndInit again.  Give them one extra tick here.
 	if (_pendingWarpTarget.empty() &&
@@ -317,7 +376,7 @@ void CryOmni3DEngine_Egypt::loadScene(const Common::String &sceneName) {
 	    !_sceneHasTimerScript) {
 		runEndInit(0);
 		if (getScriptVariableValue("EndGame") != 0) {
-			warning("Egypt: EndGame set after extra tick in %s", _currentScene.name.c_str());
+			debugC(kDebugVariable, "Egypt: EndGame set after extra tick in %s", _currentScene.name.c_str());
 			return;
 		}
 	}
@@ -346,7 +405,7 @@ void CryOmni3DEngine_Egypt::loadScene(const Common::String &sceneName) {
 void CryOmni3DEngine_Egypt::playHnmWithSpeed(const Common::Path &path) {
 	// Peek the VBL speed at HNM6 header offset 26 (uint16LE, 50 Hz ticks per frame).
 	// HNMDecoder's default 66 ms is only correct for 15-fps files; honour whatever
-	// the file declares so 12.5-fps (speed=4 → 80 ms) clips don't run too fast.
+	// the file declares so 12.5-fps (speed=4 -> 80 ms) clips don't run too fast.
 	uint32 msPerFrame = 66; // safe default matching HNMDecoder's HNM6 fallback
 	{
 		Common::File peek;
@@ -358,17 +417,16 @@ void CryOmni3DEngine_Egypt::playHnmWithSpeed(const Common::Path &path) {
 		}
 	}
 
-	warning("Egypt: HNS %s msPerFrame=%u",
+	debugC(kDebugFile, "Egypt: HNS %s msPerFrame=%u",
 	        path.toString(Common::Path::kNativeSeparator).c_str(), msPerFrame);
 
-	Video::HNMDecoder *dec = new Video::HNMDecoder(g_system->getScreenFormat());
+	Common::ScopedPtr<Video::HNMDecoder> dec(new Video::HNMDecoder(g_system->getScreenFormat()));
 	dec->setSoundType(Audio::Mixer::kMusicSoundType);
 	dec->setRegularFrameDelay(msPerFrame); // must be before loadFile()
 
 	if (!dec->loadFile(path)) {
 		warning("Egypt: failed to open HNS %s",
 		        path.toString(Common::Path::kNativeSeparator).c_str());
-		delete dec;
 		return;
 	}
 
@@ -387,8 +445,6 @@ void CryOmni3DEngine_Egypt::playHnmWithSpeed(const Common::Path &path) {
 		if (pollEvents() && checkKeysPressed())
 			break;
 	}
-
-	delete dec;
 }
 
 } // End of namespace Egypt

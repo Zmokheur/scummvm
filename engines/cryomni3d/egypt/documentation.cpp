@@ -19,8 +19,7 @@
  *
  */
 
-#include <cstdlib>
-
+#include "common/debug.h"
 #include "common/file.h"
 #include "common/system.h"
 #include "common/textconsole.h"
@@ -30,7 +29,9 @@
 #include "graphics/fontman.h"
 #include "graphics/managed_surface.h"
 
+#include "cryomni3d/egypt/documentation.h"
 #include "cryomni3d/egypt/engine.h"
+#include "cryomni3d/egypt/support/image_loader.h"
 
 namespace CryOmni3D {
 namespace Egypt {
@@ -43,24 +44,51 @@ const char *const kEgyptDocumentationThemeLabels[kEgyptDocumentationThemeCount] 
 	"La terre", "Le temps", "Les hommes", "Le pharaon", "Les dieux", "Personnages"
 };
 const char *const kEgyptDocumentationThemeBackgrounds[kEgyptDocumentationThemeCount] = {
-	"SPRITE/FICHETER.TGA",  // La terre
-	"SPRITE/FICHETEM.TGA",  // Le temps
-	"SPRITE/FICHEHOM.TGA",  // Les hommes
-	"SPRITE/FICHEPHA.TGA",  // Le pharaon
-	"SPRITE/FICHEDIE.TGA",  // Les dieux
+	"SPRITE/FICHETER.TGA",  // The Earth
+	"SPRITE/FICHETEM.TGA",  // Time
+	"SPRITE/FICHEHOM.TGA",  // Men
+	"SPRITE/FICHEPHA.TGA",  // The Pharaoh
+	"SPRITE/FICHEDIE.TGA",  // The Gods
 	"SPRITE/FICHEPER.TGA",  // Personnages
 };
+
+// Record viewer layout - approximate, to be refined from EXE data.
+// Rects built through functions to avoid global constructors.
+Common::Rect docTextPanel()   { return Common::Rect( 12,  60, 294, 388); } // body text, left column
+Common::Rect docImageRect()   { return Common::Rect(314,  60, 628, 335); } // record photo, right column
+Common::Rect docCaptionRect() { return Common::Rect(314, 340, 628, 388); } // photo caption
+Common::Rect docPrevButton()  { return Common::Rect( 90, 432, 124, 462); } // previous record
+Common::Rect docNextButton()  { return Common::Rect(130, 432, 164, 462); } // next record
+Common::Rect docBackButton()  { return Common::Rect(590, 432, 628, 468); } // back / exit viewer
+
+// Viewer palette
+struct DocRgb { byte r, g, b; };
+const DocRgb kDocTitleColor    = {245, 235, 215};
+const DocRgb kDocTextColor     = {242, 232, 210};
+const DocRgb kDocLinkColor     = {255, 180,  60};
+const DocRgb kDocCaptionColor  = {186, 178, 165};
+const DocRgb kDocNavColor      = {200, 190, 175};
+const DocRgb kDocNavActive     = {255, 235, 150};
+const DocRgb kDocNavDimmed     = { 60,  55,  50};
+const DocRgb kDocTooltipBg     = { 20,  18,  14};
+const DocRgb kDocTooltipFrame  = {188, 154,  84};
+const DocRgb kDocTooltipText   = {244, 232, 204};
+const DocRgb kDocFallbackBg    = { 68,  10,  10};
+
+uint32 docColor(const Graphics::PixelFormat &fmt, const DocRgb &c) {
+	return fmt.RGBToColor(c.r, c.g, c.b);
+}
 
 bool parseIntegerToken(const Common::String &token, int &value) {
 	if (token.empty())
 		return false;
 
-	char *endPtr = nullptr;
-	const long parsedValue = strtol(token.c_str(), &endPtr, 10);
-	if (endPtr == token.c_str() || !endPtr || *endPtr != '\0')
+	int parsed = 0;
+	int consumed = 0;
+	if (sscanf(token.c_str(), "%d%n", &parsed, &consumed) != 1 || (uint)consumed != token.size())
 		return false;
 
-	value = (int)parsedValue;
+	value = parsed;
 	return true;
 }
 
@@ -122,8 +150,8 @@ Common::Path documentationAssetPathFromName(const Common::String &assetName) {
 
 // Parse a raw body line (with #word## link markers and & replacements) into text runs.
 // linkCounter is incremented for each #word## found and maps to record->links[N].
-static void parseBodyRunLine(const Common::String &rawLine, int &linkCounter,
-                              Common::Array<EgyptDocTextRun> &runs) {
+void parseBodyRunLine(const Common::String &rawLine, int &linkCounter,
+                      Common::Array<EgyptDocTextRun> &runs) {
 	uint i = 0;
 	Common::String normal;
 	while (i < rawLine.size()) {
@@ -163,82 +191,10 @@ static void parseBodyRunLine(const Common::String &rawLine, int &linkCounter,
 	}
 }
 
-struct DocWord    { Common::String text; int linkIndex; bool lineBreak; };
-struct DocLineWord{ int wordIdx; int x; };
-struct DocLine    { Common::Array<DocLineWord> words; };
-struct DocLinkHit { Common::Rect rect; int linkIndex; };
-
-static void buildDocWordList(const Common::Array<EgyptDocTextRun> &runs,
-                              Common::Array<DocWord> &out) {
-	bool pendingBreak = false;
-	for (uint ri = 0; ri < runs.size(); ++ri) {
-		const Common::String &text = runs[ri].text;
-		const int lnk = runs[ri].linkIndex;
-		uint i = 0;
-		while (i < text.size()) {
-			if (text[i] == '\n') { pendingBreak = true; ++i; continue; }
-			if (text[i] == ' ')  { ++i; continue; }
-			uint j = i;
-			while (j < text.size() && text[j] != ' ' && text[j] != '\n') ++j;
-			DocWord w; w.text = text.substr(i, j - i); w.linkIndex = lnk; w.lineBreak = pendingBreak;
-			out.push_back(w);
-			pendingBreak = false;
-			i = j;
-		}
-	}
-}
-
-static int buildDocLines(const Common::Array<DocWord> &words, const Graphics::Font *font,
-                          int maxWidth, Common::Array<DocLine> &lines) {
-	lines.clear();
-	DocLine curLine; int curW = 0;
-	const int spW = font->getStringWidth(" ");
-	for (uint wi = 0; wi < words.size(); ++wi) {
-		const DocWord &w = words[wi];
-		if (w.lineBreak && !curLine.words.empty()) {
-			lines.push_back(curLine); curLine.words.clear(); curW = 0;
-		}
-		const int ww = font->getStringWidth(w.text);
-		if (!curLine.words.empty() && curW + spW + ww > maxWidth) {
-			lines.push_back(curLine); curLine.words.clear(); curW = 0;
-		}
-		DocLineWord lw; lw.wordIdx = wi; lw.x = curLine.words.empty() ? 0 : curW + spW;
-		curLine.words.push_back(lw);
-		curW = lw.x + ww;
-	}
-	if (!curLine.words.empty()) lines.push_back(curLine);
-	return (int)lines.size();
-}
-
-static void renderDocLines(Graphics::ManagedSurface &surface, const Graphics::Font *font,
-                            const Common::Array<DocWord> &words, const Common::Array<DocLine> &lines,
-                            const Common::Rect &textRect, int scrollLine, int visibleLines,
-                            uint32 normalColor, uint32 linkColor,
-                            Common::Array<DocLinkHit> &outLinks) {
-	outLinks.clear();
-	const int lineH = font->getFontHeight() + 1;
-	int drawY = textRect.top + 8;
-	for (int li = scrollLine; li < (int)lines.size() && li < scrollLine + visibleLines; ++li, drawY += lineH) {
-		for (uint wi = 0; wi < lines[li].words.size(); ++wi) {
-			const DocLineWord &lw = lines[li].words[wi];
-			const DocWord &word = words[lw.wordIdx];
-			const int drawX = textRect.left + 10 + lw.x;
-			font->drawString(&surface, word.text, drawX, drawY,
-			                 textRect.width() - 20, word.linkIndex >= 0 ? linkColor : normalColor);
-			if (word.linkIndex >= 0) {
-				DocLinkHit hit;
-				hit.rect = Common::Rect(drawX, drawY, drawX + font->getStringWidth(word.text), drawY + lineH);
-				hit.linkIndex = word.linkIndex;
-				outLinks.push_back(hit);
-			}
-		}
-	}
-}
-
 } // End of anonymous namespace
 
-static const EgyptDocumentationRecord *findDocumentationRecord(const Common::Array<EgyptDocumentationRecord> &records, int id) {
-	for (Common::Array<EgyptDocumentationRecord>::const_iterator it = records.begin(); it != records.end(); ++it) {
+const EgyptDocumentationRecord *Egypt_Documentation::findRecord(int id) const {
+	for (Common::Array<EgyptDocumentationRecord>::const_iterator it = _records.begin(); it != _records.end(); ++it) {
 		if (it->id == id)
 			return &(*it);
 	}
@@ -246,10 +202,8 @@ static const EgyptDocumentationRecord *findDocumentationRecord(const Common::Arr
 	return nullptr;
 }
 
-static void collectDocumentationLeafRecords(const Common::Array<EgyptDocumentationRecord> &records,
-                                            const Common::HashMap<int, Common::Array<int> > &tree,
-                                            int nodeId, Common::Array<int> &out) {
-	const EgyptDocumentationRecord *record = findDocumentationRecord(records, nodeId);
+void Egypt_Documentation::collectLeafRecords(int nodeId, Common::Array<int> &out) const {
+	const EgyptDocumentationRecord *record = findRecord(nodeId);
 	if (record) {
 		bool alreadyPresent = false;
 		for (Common::Array<int>::const_iterator it = out.begin(); it != out.end(); ++it) {
@@ -262,20 +216,18 @@ static void collectDocumentationLeafRecords(const Common::Array<EgyptDocumentati
 			out.push_back(nodeId);
 	}
 
-	Common::HashMap<int, Common::Array<int> >::const_iterator it = tree.find(nodeId);
-	if (it == tree.end())
+	Common::HashMap<int, Common::Array<int> >::const_iterator it = _tree.find(nodeId);
+	if (it == _tree.end())
 		return;
 
 	for (Common::Array<int>::const_iterator child = it->_value.begin(); child != it->_value.end(); ++child)
-		collectDocumentationLeafRecords(records, tree, *child, out);
+		collectLeafRecords(*child, out);
 }
 
-static int findDocumentationThemeIndexForRecord(const Common::Array<EgyptDocumentationRecord> &records,
-                                                const Common::HashMap<int, Common::Array<int> > &tree,
-                                                int recordId) {
+int Egypt_Documentation::findThemeIndexForRecord(int recordId) const {
 	for (int themeIndex = 0; themeIndex < kEgyptDocumentationThemeCount; ++themeIndex) {
 		Common::Array<int> themeRecords;
-		collectDocumentationLeafRecords(records, tree, kEgyptDocumentationThemeIds[themeIndex], themeRecords);
+		collectLeafRecords(kEgyptDocumentationThemeIds[themeIndex], themeRecords);
 		for (Common::Array<int>::const_iterator it = themeRecords.begin(); it != themeRecords.end(); ++it) {
 			if (*it == recordId)
 				return themeIndex;
@@ -294,15 +246,15 @@ static int findDocumentationRecordIndex(const Common::Array<int> &recordIds, int
 	return -1;
 }
 
-bool CryOmni3DEngine_Egypt::loadDocumentationData() {
-	if (_documentationDataLoaded)
+bool Egypt_Documentation::loadData() {
+	if (_dataLoaded)
 		return true;
 
-	_documentationRecords.clear();
-	_documentationTree.clear();
+	_records.clear();
+	_tree.clear();
 
 	Common::File docFile;
-	if (!docFile.open(Common::Path("REF/FR/ESPDOC.TXT"))) {
+	if (!docFile.open(_engine->getFilePath(kFileTypeDocRecords))) {
 		warning("Egypt: failed to open REF/FR/ESPDOC.TXT");
 		return false;
 	}
@@ -394,11 +346,11 @@ bool CryOmni3DEngine_Egypt::loadDocumentationData() {
 		}
 
 		record.body.trim();
-		_documentationRecords.push_back(record);
+		_records.push_back(record);
 	}
 
 	Common::File treeFile;
-	if (!treeFile.open(Common::Path("REF/FR/ESPARBO.TXT"))) {
+	if (!treeFile.open(_engine->getFilePath(kFileTypeDocTree))) {
 		warning("Egypt: failed to open REF/FR/ESPARBO.TXT");
 		return false;
 	}
@@ -430,16 +382,16 @@ bool CryOmni3DEngine_Egypt::loadDocumentationData() {
 				children.push_back(childId);
 		}
 
-		_documentationTree[parentId] = children;
+		_tree[parentId] = children;
 	}
 
-	_documentationDataLoaded = true;
-	warning("Egypt: loaded %u documentation record(s) and %u documentation tree node(s)",
-	        _documentationRecords.size(), _documentationTree.size());
+	_dataLoaded = true;
+	debugC(kDebugFile, "Egypt: loaded %u documentation record(s) and %u documentation tree node(s)",
+	        _records.size(), _tree.size());
 	return true;
 }
 
-bool CryOmni3DEngine_Egypt::isDocumentationZone(const EgyptZone &zone) const {
+bool Egypt_Documentation::isDocumentationZone(const EgyptZone &zone) const {
 	if (zone.actionId != 6)
 		return false;
 
@@ -451,7 +403,7 @@ bool CryOmni3DEngine_Egypt::isDocumentationZone(const EgyptZone &zone) const {
 	       zone.label.equalsIgnoreCase("BASEDOC");
 }
 
-int CryOmni3DEngine_Egypt::resolveDocumentationIdForZone(const EgyptZone &zone, Common::String *source) const {
+int Egypt_Documentation::resolveIdForZone(const EgyptZone &zone, Common::String *source) const {
 	int documentationId = -1;
 	if (parseIntegerToken(zone.extraParam, documentationId)) {
 		if (source)
@@ -460,8 +412,8 @@ int CryOmni3DEngine_Egypt::resolveDocumentationIdForZone(const EgyptZone &zone, 
 	}
 
 	Common::HashMap<Common::String, EgyptMessageEntry, Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo>::const_iterator it =
-		_messageLabels.find(zone.label);
-	if (it != _messageLabels.end() && it->_value.documentationId >= 0) {
+		_engine->_messageLabels.find(zone.label);
+	if (it != _engine->_messageLabels.end() && it->_value.documentationId >= 0) {
 		if (source)
 			*source = "message_suffix";
 		return it->_value.documentationId;
@@ -472,31 +424,31 @@ int CryOmni3DEngine_Egypt::resolveDocumentationIdForZone(const EgyptZone &zone, 
 	return -1;
 }
 
-void CryOmni3DEngine_Egypt::displayZoneDocumentation(const EgyptZone &zone) {
+void Egypt_Documentation::displayZone(const EgyptZone &zone) {
 	Common::String source;
-	const int documentationId = resolveDocumentationIdForZone(zone, &source);
+	const int documentationId = resolveIdForZone(zone, &source);
 
-	warning("EGYPT_BASEDOC: scene=%s context=%s zone=%03u label=%s docId=%d source=%s",
-	        _currentScene.name.c_str(), _currentScene.contextName.c_str(), zone.id,
+	debugC(kDebugVariable, "EGYPT_BASEDOC: scene=%s context=%s zone=%03u label=%s docId=%d source=%s",
+	        _engine->_currentScene.name.c_str(), _engine->_currentScene.contextName.c_str(), zone.id,
 	        zone.label.c_str(), documentationId, source.c_str());
 
 	if (documentationId >= 0) {
-		displayDocumentationById(documentationId);
+		displayRecord(documentationId);
 		return;
 	}
 
 	// Fallback: no documentation ID could be resolved
-	const Common::String title = resolveMessageLabel(zone.label);
-	Graphics::ManagedSurface surface(640, 480, g_system->getScreenFormat());
+	const Common::String title = _engine->resolveMessageLabel(zone.label);
+	Graphics::ManagedSurface surface(kScreenWidth, kScreenHeight, g_system->getScreenFormat());
 	surface.clear(surface.format.RGBToColor(0, 0, 0));
 
 	const Graphics::Font *titleFont = FontMan.getFontByUsage(Graphics::FontManager::kBigGUIFont);
 	const Graphics::Font *bodyFont  = FontMan.getFontByUsage(Graphics::FontManager::kGUIFont);
 	if (!titleFont) titleFont = bodyFont;
 
-	const uint32 borderColor = surface.format.RGBToColor(170, 130, 48);
+	const uint32 borderColor = docColor(surface.format, kDocTooltipFrame);
 	const uint32 titleColor  = surface.format.RGBToColor(250, 225, 170);
-	const uint32 textColor   = surface.format.RGBToColor(244, 232, 204);
+	const uint32 textColor   = docColor(surface.format, kDocTooltipText);
 	const Common::Rect panel(48, 160, 592, 356);
 	surface.fillRect(panel, surface.format.RGBToColor(12, 12, 12));
 	surface.frameRect(panel, borderColor);
@@ -507,50 +459,288 @@ void CryOmni3DEngine_Egypt::displayZoneDocumentation(const EgyptZone &zone) {
 	g_system->copyRectToScreen(surface.getPixels(), surface.pitch, 0, 0, surface.w, surface.h);
 	g_system->updateScreen();
 
-	showMouse(true);
-	setInterfaceCursor(kEgyptCursorDefault);
-	clearKeys();
-	waitMouseRelease();
+	_engine->showMouse(true);
+	_engine->setInterfaceCursor(kEgyptCursorDefault);
+	_engine->clearKeys();
+	_engine->waitMouseRelease();
 
-	while (!shouldAbort()) {
-		pollEvents();
-		const Common::KeyCode keycode = getNextKey().keycode;
-		if (getCurrentMouseButton() == 1 || keycode != Common::KEYCODE_INVALID)
+	while (!_engine->shouldAbort()) {
+		_engine->pollEvents();
+		const Common::KeyCode keycode = _engine->getNextKey().keycode;
+		if (_engine->getCurrentMouseButton() == 1 || keycode != Common::KEYCODE_INVALID)
 			break;
 		g_system->delayMillis(10);
 	}
 
-	clearKeys();
-	waitMouseRelease();
+	_engine->clearKeys();
+	_engine->waitMouseRelease();
 }
 
-void CryOmni3DEngine_Egypt::displayDocumentationById(int docId) {
-	if (!loadDocumentationData()) {
-		warning("Egypt: displayDocumentationById(%d): loadDocumentationData FAILED", docId);
+// Builds the word-wrapped layout of the current record; false when the record is missing
+bool Egypt_Documentation::prepareRecord(ViewerState &state, const Graphics::Font *bodyFont) {
+	state.record = findRecord(state.themeRecords[state.currentRecordIndex]);
+	if (!state.record)
+		return false;
+
+	// Split body runs into words
+	state.words.clear();
+	bool pendingBreak = false;
+	for (uint ri = 0; ri < state.record->bodyRuns.size(); ++ri) {
+		const Common::String &text = state.record->bodyRuns[ri].text;
+		const int lnk = state.record->bodyRuns[ri].linkIndex;
+		uint i = 0;
+		while (i < text.size()) {
+			if (text[i] == '\n') { pendingBreak = true; ++i; continue; }
+			if (text[i] == ' ')  { ++i; continue; }
+			uint j = i;
+			while (j < text.size() && text[j] != ' ' && text[j] != '\n') ++j;
+			DocWord w; w.text = text.substr(i, j - i); w.linkIndex = lnk; w.lineBreak = pendingBreak;
+			state.words.push_back(w);
+			pendingBreak = false;
+			i = j;
+		}
+	}
+
+	// Wrap words into lines fitting the text panel
+	const int maxWidth = docTextPanel().width();
+	state.lines.clear();
+	DocLine curLine; int curW = 0;
+	const int spW = bodyFont->getStringWidth(" ");
+	for (uint wi = 0; wi < state.words.size(); ++wi) {
+		const DocWord &w = state.words[wi];
+		if (w.lineBreak && !curLine.words.empty()) {
+			state.lines.push_back(curLine); curLine.words.clear(); curW = 0;
+		}
+		const int ww = bodyFont->getStringWidth(w.text);
+		if (!curLine.words.empty() && curW + spW + ww > maxWidth) {
+			state.lines.push_back(curLine); curLine.words.clear(); curW = 0;
+		}
+		DocLineWord lw; lw.wordIdx = wi; lw.x = curLine.words.empty() ? 0 : curW + spW;
+		curLine.words.push_back(lw);
+		curW = lw.x + ww;
+	}
+	if (!curLine.words.empty()) state.lines.push_back(curLine);
+
+	const int lineHeight = bodyFont->getFontHeight() + 1;
+	state.visibleLines = MAX(1, docTextPanel().height() / lineHeight);
+	state.maxScroll    = MAX<int>(0, (int)state.lines.size() - state.visibleLines);
+	state.scrollOffset = CLIP<int>(state.scrollOffset, 0, state.maxScroll);
+	return true;
+}
+
+// Pure drawing of the record screen; refreshes state.linkHits
+void Egypt_Documentation::drawRecord(ViewerState &state, const Graphics::Font *titleFont,
+                                     const Graphics::Font *bodyFont, const Common::Point &mousePos) {
+	const EgyptDocumentationRecord *record = state.record;
+	const Common::Rect textPanel   = docTextPanel();
+	const Common::Rect imageRect   = docImageRect();
+	const Common::Rect captionRect = docCaptionRect();
+	const Common::Rect prevButton  = docPrevButton();
+	const Common::Rect nextButton  = docNextButton();
+	const Common::Rect backButton  = docBackButton();
+	const int lineHeight = bodyFont->getFontHeight() + 1;
+
+	Graphics::ManagedSurface rs(kScreenWidth, kScreenHeight, g_system->getScreenFormat());
+	if (state.hasBackground)
+		rs.blitFrom(state.background);
+	else
+		rs.clear(docColor(rs.format, kDocFallbackBg));
+
+	// Record photo (right side) - load at native size, scale to fit imageRect
+	const Common::Path assetPath = documentationAssetPathFromName(record->assetName);
+	if (!assetPath.empty()) {
+		Graphics::ManagedSurface recordAsset;
+		if (loadTgaImage(assetPath, recordAsset, false) && recordAsset.w > 0 && recordAsset.h > 0) {
+			const int dstW = imageRect.width();
+			const int dstH = imageRect.height();
+			const float scaleX = (float)dstW / recordAsset.w;
+			const float scaleY = (float)dstH / recordAsset.h;
+			const float scale  = MIN(scaleX, scaleY);
+			const int fitW = (int)(recordAsset.w * scale);
+			const int fitH = (int)(recordAsset.h * scale);
+			const int offX = imageRect.left + (dstW - fitW) / 2;
+			const int offY = imageRect.top  + (dstH - fitH) / 2;
+			rs.blitFrom(recordAsset,
+			            Common::Rect(0, 0, recordAsset.w, recordAsset.h),
+			            Common::Rect(offX, offY, offX + fitW, offY + fitH));
+		}
+	}
+
+	const uint32 titleCol   = docColor(rs.format, kDocTitleColor);
+	const uint32 textCol    = docColor(rs.format, kDocTextColor);
+	const uint32 linkCol    = docColor(rs.format, kDocLinkColor);
+	const uint32 captionCol = docColor(rs.format, kDocCaptionColor);
+	const uint32 navCol     = docColor(rs.format, kDocNavColor);
+	const uint32 navActive  = docColor(rs.format, kDocNavActive);
+	const uint32 navDimmed  = docColor(rs.format, kDocNavDimmed);
+
+	// Title (centered in title bar baked into TGA)
+	drawCenteredLine(rs, titleFont, record->title, 24, titleCol);
+
+	// Body text with inline hyperlinks
+	state.linkHits.clear();
+	int drawY = textPanel.top + 8;
+	for (int li = state.scrollOffset;
+	     li < (int)state.lines.size() && li < state.scrollOffset + state.visibleLines;
+	     ++li, drawY += lineHeight) {
+		for (uint wi = 0; wi < state.lines[li].words.size(); ++wi) {
+			const DocLineWord &lw = state.lines[li].words[wi];
+			const DocWord &word = state.words[lw.wordIdx];
+			const int drawX = textPanel.left + 10 + lw.x;
+			bodyFont->drawString(&rs, word.text, drawX, drawY,
+			                     textPanel.width() - 20, word.linkIndex >= 0 ? linkCol : textCol);
+			if (word.linkIndex >= 0) {
+				DocLinkHit hit;
+				hit.rect = Common::Rect(drawX, drawY, drawX + bodyFont->getStringWidth(word.text), drawY + lineHeight);
+				hit.linkIndex = word.linkIndex;
+				state.linkHits.push_back(hit);
+			}
+		}
+	}
+
+	// Photo caption (centered, below image)
+	if (!record->assetCaption.empty()) {
+		Common::Array<Common::String> capLines;
+		bodyFont->wordWrapText(record->assetCaption, captionRect.width(), capLines);
+		int capY = captionRect.top;
+		for (uint ci = 0; ci < capLines.size() && capY + lineHeight <= captionRect.bottom; ++ci, capY += lineHeight)
+			bodyFont->drawString(&rs, capLines[ci], captionRect.left, capY,
+			                     captionRect.width(), captionCol, Graphics::kTextAlignCenter);
+	}
+
+	// Navigation < > and back button
+	const bool canPrev = state.currentRecordIndex > 0;
+	const bool canNext = state.currentRecordIndex + 1 < (int)state.themeRecords.size();
+	bodyFont->drawString(&rs, "<", prevButton.left, prevButton.top + 2, prevButton.width(),
+	    (canPrev && prevButton.contains(mousePos)) ? navActive : (canPrev ? navCol : navDimmed),
+	    Graphics::kTextAlignCenter);
+	bodyFont->drawString(&rs, ">", nextButton.left, nextButton.top + 2, nextButton.width(),
+	    (canNext && nextButton.contains(mousePos)) ? navActive : (canNext ? navCol : navDimmed),
+	    Graphics::kTextAlignCenter);
+	bodyFont->drawString(&rs, "*", backButton.left, backButton.top + 2, backButton.width(),
+	    backButton.contains(mousePos) ? navActive : navCol,
+	    Graphics::kTextAlignCenter);
+
+	// Hovered inline link -> cursor + tooltip
+	const DocLinkHit *hoveredLink = nullptr;
+	for (uint hi = 0; hi < state.linkHits.size(); ++hi) {
+		if (state.linkHits[hi].rect.contains(mousePos)) { hoveredLink = &state.linkHits[hi]; break; }
+	}
+	_engine->setInterfaceCursor(hoveredLink ? kEgyptCursorWarpLabel : kEgyptCursorDefault);
+	if (hoveredLink && hoveredLink->linkIndex < (int)record->links.size()) {
+		const EgyptDocumentationRecord *lr = findRecord(record->links[hoveredLink->linkIndex]);
+		if (lr && !lr->title.empty()) {
+			const int tipW = bodyFont->getStringWidth(lr->title);
+			const int tipX = CLIP<int>(mousePos.x + 18, 8, rs.w - tipW - 12);
+			const int tipY = CLIP<int>(mousePos.y + 14, 8, rs.h - lineHeight - 10);
+			const Common::Rect tipR(tipX - 6, tipY - 3, tipX + tipW + 6, tipY + lineHeight + 4);
+			rs.fillRect(tipR,  docColor(rs.format, kDocTooltipBg));
+			rs.frameRect(tipR, docColor(rs.format, kDocTooltipFrame));
+			bodyFont->drawString(&rs, lr->title, tipX, tipY,
+			                     rs.w - tipX, docColor(rs.format, kDocTooltipText));
+		}
+	}
+
+	g_system->copyRectToScreen(rs.getPixels(), rs.pitch, 0, 0, rs.w, rs.h);
+	g_system->updateScreen();
+}
+
+// Handles keys and clicks for the record viewer.
+// Returns true when the current record must be reloaded (navigation/link).
+bool Egypt_Documentation::handleRecordEvents(ViewerState &state, bool &exitViewer, bool &redraw) {
+	const Common::Rect textPanel  = docTextPanel();
+	const Common::Rect prevButton = docPrevButton();
+	const Common::Rect nextButton = docNextButton();
+	const Common::Rect backButton = docBackButton();
+
+	const Common::KeyCode keycode = _engine->getNextKey().keycode;
+	if (keycode == Common::KEYCODE_ESCAPE || keycode == Common::KEYCODE_BACKSPACE) {
+		exitViewer = true;
+		return false;
+	} else if (keycode == Common::KEYCODE_LEFT) {
+		if (state.currentRecordIndex > 0) { --state.currentRecordIndex; state.scrollOffset = 0; return true; }
+	} else if (keycode == Common::KEYCODE_RIGHT) {
+		if (state.currentRecordIndex + 1 < (int)state.themeRecords.size()) {
+			++state.currentRecordIndex; state.scrollOffset = 0; return true;
+		}
+	} else if (keycode == Common::KEYCODE_UP) {
+		if (state.scrollOffset > 0) { --state.scrollOffset; redraw = true; }
+	} else if (keycode == Common::KEYCODE_DOWN) {
+		if (state.scrollOffset < state.maxScroll) { ++state.scrollOffset; redraw = true; }
+	}
+
+	if (_engine->getCurrentMouseButton() == 1) {
+		const Common::Point mouse = _engine->getMousePos();
+		_engine->waitMouseRelease();
+
+		// Inline hyperlink click
+		for (uint hi = 0; hi < state.linkHits.size(); ++hi) {
+			if (!state.linkHits[hi].rect.contains(mouse)) continue;
+			const int hitIdx = state.linkHits[hi].linkIndex;
+			if (hitIdx < (int)state.record->links.size()) {
+				const int linkId = state.record->links[hitIdx];
+				const int lt = findThemeIndexForRecord(linkId);
+				if (lt >= 0) {
+					Common::Array<int> ltr;
+					collectLeafRecords(kEgyptDocumentationThemeIds[lt], ltr);
+					const int li = findDocumentationRecordIndex(ltr, linkId);
+					if (li >= 0) {
+						state.selectedTheme = lt; state.themeRecords = ltr;
+						state.currentRecordIndex = li; state.scrollOffset = 0;
+						return true;
+					}
+				} else {
+					state.themeRecords.clear(); state.themeRecords.push_back(linkId);
+					state.currentRecordIndex = 0; state.scrollOffset = 0;
+					return true;
+				}
+			}
+		}
+
+		if (backButton.contains(mouse)) {
+			exitViewer = true;
+		} else if (prevButton.contains(mouse) && state.currentRecordIndex > 0) {
+			--state.currentRecordIndex; state.scrollOffset = 0; return true;
+		} else if (nextButton.contains(mouse) && state.currentRecordIndex + 1 < (int)state.themeRecords.size()) {
+			++state.currentRecordIndex; state.scrollOffset = 0; return true;
+		} else if (textPanel.contains(mouse)) {
+			if (mouse.y >= textPanel.top + textPanel.height() / 2) {
+				if (state.scrollOffset < state.maxScroll) ++state.scrollOffset;
+			} else if (state.scrollOffset > 0) {
+				--state.scrollOffset;
+			}
+			redraw = true;
+		}
+	}
+
+	return false;
+}
+
+void Egypt_Documentation::displayRecord(int docId) {
+	if (!loadData()) {
+		warning("Egypt: displayRecord(%d): documentation data could not be loaded", docId);
 		return;
 	}
 
-	warning("Egypt: displayDocumentationById(%d): data loaded, %u record(s)", docId, _documentationRecords.size());
+	debugC(kDebugFile, "Egypt: displayRecord(%d): data loaded, %u record(s)", docId, _records.size());
 
-	const EgyptDocumentationRecord *diagRec = findDocumentationRecord(_documentationRecords, docId);
+	const EgyptDocumentationRecord *diagRec = findRecord(docId);
 	if (!diagRec)
-		warning("Egypt: displayDocumentationById(%d): record NOT FOUND in %u records", docId, _documentationRecords.size());
+		warning("Egypt: displayRecord(%d): record not found in %u records", docId, _records.size());
 	else
-		warning("Egypt: displayDocumentationById(%d): record found title='%s' bodyRuns=%u links=%u",
+		debugC(kDebugVariable, "Egypt: displayRecord(%d): record found title='%s' bodyRuns=%u links=%u",
 		        docId, diagRec->title.c_str(), diagRec->bodyRuns.size(), diagRec->links.size());
 
-	int selectedTheme = findDocumentationThemeIndexForRecord(_documentationRecords, _documentationTree, docId);
-	Common::Array<int> themeRecords;
-	int currentRecordIndex = 0;
+	ViewerState state;
+	state.selectedTheme = findThemeIndexForRecord(docId);
 
-	if (selectedTheme >= 0) {
-		collectDocumentationLeafRecords(_documentationRecords, _documentationTree,
-		                                kEgyptDocumentationThemeIds[selectedTheme], themeRecords);
-		const int idx = findDocumentationRecordIndex(themeRecords, docId);
-		if (idx >= 0) currentRecordIndex = idx;
+	if (state.selectedTheme >= 0) {
+		collectLeafRecords(kEgyptDocumentationThemeIds[state.selectedTheme], state.themeRecords);
+		const int idx = findDocumentationRecordIndex(state.themeRecords, docId);
+		if (idx >= 0) state.currentRecordIndex = idx;
 	} else {
-		selectedTheme = 0;
-		themeRecords.push_back(docId);
+		state.selectedTheme = 0;
+		state.themeRecords.push_back(docId);
 	}
 
 	const Graphics::Font *titleFont = FontMan.getFontByUsage(Graphics::FontManager::kBigGUIFont);
@@ -559,250 +749,89 @@ void CryOmni3DEngine_Egypt::displayDocumentationById(int docId) {
 	if (!bodyFont)  bodyFont  = titleFont;
 	if (!bodyFont)  return;
 
-	showMouse(true);
-	setInterfaceCursor(kEgyptCursorDefault);
-	clearKeys();
-	waitMouseRelease();
+	_engine->showMouse(true);
+	_engine->setInterfaceCursor(kEgyptCursorDefault);
+	_engine->clearKeys();
+	_engine->waitMouseRelease();
 
-	// Layout — approximate, to be refined from EXE data
-	const Common::Rect textPanel  ( 12,  60, 294, 388); // body text, left column
-	const Common::Rect imageRect  (314,  60, 628, 335); // record photo, right column (16px gap after text)
-	const Common::Rect captionRect(314, 340, 628, 388); // photo caption
-	const Common::Rect prevButton ( 90, 432, 124, 462); // ◄
-	const Common::Rect nextButton (130, 432, 164, 462); // ►
-	const Common::Rect backButton (590, 432, 628, 468); // retour
-
-	int scrollOffset = 0;
 	bool exitViewer = false;
-	int loadedBgTheme = -2;
-	Graphics::ManagedSurface viewerBackground;
-	bool hasViewerBackground = false;
 
-	while (!shouldAbort() && !exitViewer) {
-		bool reloadRecord = false;
-
+	while (!_engine->shouldAbort() && !exitViewer) {
 		// Reload theme background only when theme changes
-		if (selectedTheme != loadedBgTheme) {
-			const char *bgName = (selectedTheme >= 0 && selectedTheme < kEgyptDocumentationThemeCount)
-			    ? kEgyptDocumentationThemeBackgrounds[selectedTheme]
+		if (state.selectedTheme != state.loadedBgTheme) {
+			const char *bgName = (state.selectedTheme >= 0 && state.selectedTheme < kEgyptDocumentationThemeCount)
+			    ? kEgyptDocumentationThemeBackgrounds[state.selectedTheme]
 			    : "SPRITE/FONDBLEU.TGA";
-			viewerBackground = Graphics::ManagedSurface();
-			hasViewerBackground = loadWrappedTgaSurface(Common::Path(bgName), viewerBackground);
-			loadedBgTheme = selectedTheme;
+			state.background = Graphics::ManagedSurface();
+			state.hasBackground = loadTgaImage(Common::Path(bgName), state.background, true);
+			state.loadedBgTheme = state.selectedTheme;
 		}
 
-		const EgyptDocumentationRecord *record =
-		    findDocumentationRecord(_documentationRecords, themeRecords[currentRecordIndex]);
-		if (!record) break;
-
-		Common::Array<DocWord> docWords;
-		buildDocWordList(record->bodyRuns, docWords);
-		Common::Array<DocLine> docLines;
-		buildDocLines(docWords, bodyFont, textPanel.width(), docLines);
-
-		const int lineHeight   = bodyFont->getFontHeight() + 1;
-		const int visibleLines = MAX(1, textPanel.height() / lineHeight);
-		const int maxScroll    = MAX<int>(0, (int)docLines.size() - visibleLines);
-		scrollOffset = CLIP<int>(scrollOffset, 0, maxScroll);
+		if (!prepareRecord(state, bodyFont))
+			break;
 
 		Common::Point lastMousePos(-1, -1);
-		bool redrawRecord = true;
-		Common::Array<DocLinkHit> linkHits;
+		bool redraw = true;
+		bool reloadRecord = false;
 
-		while (!shouldAbort() && !exitViewer && !reloadRecord) {
-			if (redrawRecord) {
-				Graphics::ManagedSurface rs(640, 480, g_system->getScreenFormat());
-				if (hasViewerBackground)
-					rs.blitFrom(viewerBackground);
-				else
-					rs.clear(rs.format.RGBToColor(68, 10, 10));
-
-				// Record photo (right side) — load at native size, scale to fit imageRect
-				const Common::Path assetPath = documentationAssetPathFromName(record->assetName);
-				if (!assetPath.empty()) {
-					Graphics::ManagedSurface recordAsset;
-					if (loadWrappedTgaRaw(assetPath, recordAsset) && recordAsset.w > 0 && recordAsset.h > 0) {
-						const int dstW = imageRect.width();
-						const int dstH = imageRect.height();
-						const float scaleX = (float)dstW / recordAsset.w;
-						const float scaleY = (float)dstH / recordAsset.h;
-						const float scale  = MIN(scaleX, scaleY);
-						const int fitW = (int)(recordAsset.w * scale);
-						const int fitH = (int)(recordAsset.h * scale);
-						const int offX = imageRect.left + (dstW - fitW) / 2;
-						const int offY = imageRect.top  + (dstH - fitH) / 2;
-						rs.blitFrom(recordAsset,
-						            Common::Rect(0, 0, recordAsset.w, recordAsset.h),
-						            Common::Rect(offX, offY, offX + fitW, offY + fitH));
-					}
-				}
-
-				const Common::Point mousePos = getMousePos();
-				const uint32 titleCol   = rs.format.RGBToColor(245, 235, 215);
-				const uint32 textCol    = rs.format.RGBToColor(242, 232, 210);
-				const uint32 linkCol    = rs.format.RGBToColor(255, 180, 60);
-				const uint32 captionCol = rs.format.RGBToColor(186, 178, 165);
-				const uint32 navCol     = rs.format.RGBToColor(200, 190, 175);
-				const uint32 navActive  = rs.format.RGBToColor(255, 235, 150);
-				const uint32 navDimmed  = rs.format.RGBToColor(60, 55, 50);
-
-				// Title (centered in title bar baked into TGA)
-				drawCenteredLine(rs, titleFont, record->title, 24, titleCol);
-
-				// Body text with inline hyperlinks
-				renderDocLines(rs, bodyFont, docWords, docLines, textPanel,
-				               scrollOffset, visibleLines, textCol, linkCol, linkHits);
-
-				// Photo caption (centered, below image)
-				if (!record->assetCaption.empty()) {
-					Common::Array<Common::String> capLines;
-					bodyFont->wordWrapText(record->assetCaption, captionRect.width(), capLines);
-					int capY = captionRect.top;
-					for (uint ci = 0; ci < capLines.size() && capY + lineHeight <= captionRect.bottom; ++ci, capY += lineHeight)
-						bodyFont->drawString(&rs, capLines[ci], captionRect.left, capY,
-						                     captionRect.width(), captionCol, Graphics::kTextAlignCenter);
-				}
-
-				// Navigation ◄ ►
-				const bool canPrev = currentRecordIndex > 0;
-				const bool canNext = currentRecordIndex + 1 < (int)themeRecords.size();
-				bodyFont->drawString(&rs, "<", prevButton.left, prevButton.top + 2, prevButton.width(),
-				    (canPrev && prevButton.contains(mousePos)) ? navActive : (canPrev ? navCol : navDimmed),
-				    Graphics::kTextAlignCenter);
-				bodyFont->drawString(&rs, ">", nextButton.left, nextButton.top + 2, nextButton.width(),
-				    (canNext && nextButton.contains(mousePos)) ? navActive : (canNext ? navCol : navDimmed),
-				    Graphics::kTextAlignCenter);
-				bodyFont->drawString(&rs, "*", backButton.left, backButton.top + 2, backButton.width(),
-				    backButton.contains(mousePos) ? navActive : navCol,
-				    Graphics::kTextAlignCenter);
-
-				// Hovered inline link → cursor + tooltip
-				const DocLinkHit *hoveredLink = nullptr;
-				for (uint hi = 0; hi < linkHits.size(); ++hi) {
-					if (linkHits[hi].rect.contains(mousePos)) { hoveredLink = &linkHits[hi]; break; }
-				}
-				setInterfaceCursor(hoveredLink ? kEgyptCursorWarpLabel : kEgyptCursorDefault);
-				if (hoveredLink && hoveredLink->linkIndex < (int)record->links.size()) {
-					const EgyptDocumentationRecord *lr = findDocumentationRecord(
-					    _documentationRecords, record->links[hoveredLink->linkIndex]);
-					if (lr && !lr->title.empty()) {
-						const int tipW = bodyFont->getStringWidth(lr->title);
-						const int tipX = CLIP<int>(mousePos.x + 18, 8, rs.w - tipW - 12);
-						const int tipY = CLIP<int>(mousePos.y + 14, 8, rs.h - lineHeight - 10);
-						const Common::Rect tipR(tipX - 6, tipY - 3, tipX + tipW + 6, tipY + lineHeight + 4);
-						rs.fillRect(tipR,  rs.format.RGBToColor(20, 18, 14));
-						rs.frameRect(tipR, rs.format.RGBToColor(188, 154, 84));
-						bodyFont->drawString(&rs, lr->title, tipX, tipY,
-						                     rs.w - tipX, rs.format.RGBToColor(244, 232, 204));
-					}
-				}
-
-				g_system->copyRectToScreen(rs.getPixels(), rs.pitch, 0, 0, rs.w, rs.h);
-				g_system->updateScreen();
+		while (!_engine->shouldAbort() && !exitViewer && !reloadRecord) {
+			if (redraw) {
+				const Common::Point mousePos = _engine->getMousePos();
+				drawRecord(state, titleFont, bodyFont, mousePos);
 				lastMousePos = mousePos;
-				redrawRecord = false;
+				redraw = false;
 			}
 
-			pollEvents();
-			const Common::Point currentMousePos = getMousePos();
-			if (currentMousePos != lastMousePos) { redrawRecord = true; continue; }
+			_engine->pollEvents();
+			const Common::Point currentMousePos = _engine->getMousePos();
+			if (currentMousePos != lastMousePos) { redraw = true; continue; }
 
-			const Common::KeyCode keycode = getNextKey().keycode;
-			if (keycode == Common::KEYCODE_ESCAPE || keycode == Common::KEYCODE_BACKSPACE) {
-				exitViewer = true; break;
-			} else if (keycode == Common::KEYCODE_LEFT) {
-				if (currentRecordIndex > 0) { --currentRecordIndex; scrollOffset = 0; reloadRecord = true; }
-			} else if (keycode == Common::KEYCODE_RIGHT) {
-				if (currentRecordIndex + 1 < (int)themeRecords.size()) { ++currentRecordIndex; scrollOffset = 0; reloadRecord = true; }
-			} else if (keycode == Common::KEYCODE_UP) {
-				if (scrollOffset > 0) { --scrollOffset; redrawRecord = true; }
-			} else if (keycode == Common::KEYCODE_DOWN) {
-				if (scrollOffset < maxScroll) { ++scrollOffset; redrawRecord = true; }
-			}
-
-			if (getCurrentMouseButton() == 1) {
-				const Common::Point mouse = getMousePos();
-				waitMouseRelease();
-				bool handledClick = false;
-
-				// Inline hyperlink click
-				for (uint hi = 0; hi < linkHits.size() && !handledClick; ++hi) {
-					if (!linkHits[hi].rect.contains(mouse)) continue;
-					const int hitIdx = linkHits[hi].linkIndex;
-					if (hitIdx < (int)record->links.size()) {
-						const int linkId = record->links[hitIdx];
-						const int lt = findDocumentationThemeIndexForRecord(_documentationRecords, _documentationTree, linkId);
-						if (lt >= 0) {
-							Common::Array<int> ltr;
-							collectDocumentationLeafRecords(_documentationRecords, _documentationTree, kEgyptDocumentationThemeIds[lt], ltr);
-							const int li = findDocumentationRecordIndex(ltr, linkId);
-							if (li >= 0) { selectedTheme = lt; themeRecords = ltr; currentRecordIndex = li; scrollOffset = 0; reloadRecord = true; handledClick = true; }
-						} else {
-							themeRecords.clear(); themeRecords.push_back(linkId);
-							currentRecordIndex = 0; scrollOffset = 0; reloadRecord = true; handledClick = true;
-						}
-					}
-				}
-
-				if (!handledClick) {
-					if (backButton.contains(mouse)) {
-						exitViewer = true;
-					} else if (prevButton.contains(mouse) && currentRecordIndex > 0) {
-						--currentRecordIndex; scrollOffset = 0; reloadRecord = true;
-					} else if (nextButton.contains(mouse) && currentRecordIndex + 1 < (int)themeRecords.size()) {
-						++currentRecordIndex; scrollOffset = 0; reloadRecord = true;
-					} else if (textPanel.contains(mouse)) {
-						if (mouse.y >= textPanel.top + textPanel.height() / 2) { if (scrollOffset < maxScroll) ++scrollOffset; }
-						else if (scrollOffset > 0) { --scrollOffset; }
-						redrawRecord = true;
-					}
-				}
-			}
+			reloadRecord = handleRecordEvents(state, exitViewer, redraw);
 
 			if (reloadRecord) break;
 			if (!exitViewer) g_system->delayMillis(10);
 		}
 	}
 
-	clearKeys();
-	waitMouseRelease();
+	_engine->clearKeys();
+	_engine->waitMouseRelease();
 }
 
-void CryOmni3DEngine_Egypt::startDocumentationMode() {
-	warning("EGYPT_MENU: selection=Documentation mode=autonomous status=prototype");
+void Egypt_Documentation::runStandaloneMode() {
+	debugC(kDebugVariable, "EGYPT_MENU: selection=Documentation mode=autonomous status=prototype");
 
-	if (!loadDocumentationData()) {
+	if (!loadData()) {
 		Common::Array<Common::String> lines;
 		lines.push_back("Documentation data not available");
 		lines.push_back("Cliquez ou appuyez sur une touche pour revenir au menu");
-		drawSimpleScreen("Egypt 1156", lines);
-		clearKeys();
-		waitMouseRelease();
-		while (!shouldAbort()) {
-			pollEvents();
-			if (getCurrentMouseButton() == 1 || getNextKey().keycode != Common::KEYCODE_INVALID)
+		_engine->drawSimpleScreen("Egypt 1156", lines);
+		_engine->clearKeys();
+		_engine->waitMouseRelease();
+		while (!_engine->shouldAbort()) {
+			_engine->pollEvents();
+			if (_engine->getCurrentMouseButton() == 1 || _engine->getNextKey().keycode != Common::KEYCODE_INVALID)
 				break;
 			g_system->updateScreen();
 			g_system->delayMillis(10);
 		}
-		clearKeys();
-		waitMouseRelease();
+		_engine->clearKeys();
+		_engine->waitMouseRelease();
 		return;
 	}
 
 	Graphics::ManagedSurface summaryBackground;
 	Graphics::ManagedSurface viewerBackground;
-	const bool hasSummaryBackground = loadWrappedTgaSurface(Common::Path("SPRITE/SOMMAIRE.TGA"), summaryBackground);
-	const bool hasViewerBackground = loadWrappedTgaSurface(Common::Path("SPRITE/FONDBLEU.TGA"), viewerBackground);
+	const bool hasSummaryBackground = loadTgaImage(_engine->getFilePath(kFileTypeSpriteImage, "SOMMAIRE.TGA"), summaryBackground, true);
+	const bool hasViewerBackground = loadTgaImage(_engine->getFilePath(kFileTypeSpriteImage, "FONDBLEU.TGA"), viewerBackground, true);
 	if (hasSummaryBackground)
-		warning("EGYPT_MENU: documentation_asset=SOMMAIRE.TGA status=loaded");
+		debugC(kDebugFile, "EGYPT_MENU: documentation_asset=SOMMAIRE.TGA status=loaded");
 	if (hasViewerBackground)
-		warning("EGYPT_MENU: documentation_asset=FONDBLEU.TGA status=loaded");
+		debugC(kDebugFile, "EGYPT_MENU: documentation_asset=FONDBLEU.TGA status=loaded");
 
-	showMouse(true);
-	setInterfaceCursor(kEgyptCursorDefault);
-	clearKeys();
-	waitMouseRelease();
+	_engine->showMouse(true);
+	_engine->setInterfaceCursor(kEgyptCursorDefault);
+	_engine->clearKeys();
+	_engine->waitMouseRelease();
 
 	// Layout positions (estimated from original screenshot, 640x480)
 	static const int kThemeTextX = 80;
@@ -822,7 +851,7 @@ void CryOmni3DEngine_Egypt::startDocumentationMode() {
 	int openTargetId    = -1;
 
 	bool exitDocumentation = false;
-	while (!shouldAbort() && !exitDocumentation) {
+	while (!_engine->shouldAbort() && !exitDocumentation) {
 		// Static theme hit boxes (icon + label area, left column)
 		Common::Rect themeBoxes[kEgyptDocumentationThemeCount];
 		for (int i = 0; i < kEgyptDocumentationThemeCount; ++i)
@@ -840,21 +869,21 @@ void CryOmni3DEngine_Egypt::startDocumentationMode() {
 		bool openTheme    = false;
 		bool redrawSummary = true;
 
-		while (!shouldAbort() && !exitDocumentation && !openTheme) {
+		while (!_engine->shouldAbort() && !exitDocumentation && !openTheme) {
 			// Recompute dynamic children lists from current selection each iteration
 			Common::Array<int> midChildren;
 			if (selectedTheme >= 0) {
 				Common::HashMap<int, Common::Array<int> >::const_iterator it =
-				        _documentationTree.find(kEgyptDocumentationThemeIds[selectedTheme]);
-				if (it != _documentationTree.end())
+				        _tree.find(kEgyptDocumentationThemeIds[selectedTheme]);
+				if (it != _tree.end())
 					midChildren = it->_value;
 			}
 
 			Common::Array<int> rightChildren;
 			if (selectedMidId >= 0) {
 				Common::HashMap<int, Common::Array<int> >::const_iterator it =
-				        _documentationTree.find(selectedMidId);
-				if (it != _documentationTree.end())
+				        _tree.find(selectedMidId);
+				if (it != _tree.end())
 					rightChildren = it->_value;
 			}
 
@@ -874,18 +903,18 @@ void CryOmni3DEngine_Egypt::startDocumentationMode() {
 			}
 
 			if (redrawSummary) {
-				Graphics::ManagedSurface summarySurface(640, 480, g_system->getScreenFormat());
+				Graphics::ManagedSurface summarySurface(kScreenWidth, kScreenHeight, g_system->getScreenFormat());
 				if (hasSummaryBackground)
 					summarySurface.blitFrom(summaryBackground);
 				else
 					summarySurface.clear(summarySurface.format.RGBToColor(0, 0, 0));
 
-				const uint32 normalColor = summarySurface.format.RGBToColor(242, 232, 210);
-				const uint32 activeColor = summarySurface.format.RGBToColor(255, 180, 60);
+				const uint32 normalColor = docColor(summarySurface.format, kDocTextColor);
+				const uint32 activeColor = docColor(summarySurface.format, kDocLinkColor);
 
 				const int fontH = bodyFont->getFontHeight();
 
-				// Left column: theme labels — vertically centered within each icon slot
+				// Left column: theme labels - vertically centered within each icon slot
 				for (int i = 0; i < kEgyptDocumentationThemeCount; ++i) {
 					const bool active = (i == hoveredTheme || i == selectedTheme);
 					const int textY = kThemeTextY[i] - fontH / 2;
@@ -899,8 +928,7 @@ void CryOmni3DEngine_Egypt::startDocumentationMode() {
 
 				// Middle column: direct children of selected theme
 				for (uint j = 0; j < midChildren.size(); ++j) {
-					const EgyptDocumentationRecord *rec =
-					        findDocumentationRecord(_documentationRecords, midChildren[j]);
+					const EgyptDocumentationRecord *rec = findRecord(midChildren[j]);
 					if (!rec)
 						continue;
 					const bool active = ((int)j == hoveredMidIdx || midChildren[j] == selectedMidId);
@@ -911,8 +939,7 @@ void CryOmni3DEngine_Egypt::startDocumentationMode() {
 
 				// Right column: children of selected mid node
 				for (uint k = 0; k < rightChildren.size(); ++k) {
-					const EgyptDocumentationRecord *rec =
-					        findDocumentationRecord(_documentationRecords, rightChildren[k]);
+					const EgyptDocumentationRecord *rec = findRecord(rightChildren[k]);
 					if (!rec)
 						continue;
 					const bool active = ((int)k == hoveredRightIdx);
@@ -927,8 +954,8 @@ void CryOmni3DEngine_Egypt::startDocumentationMode() {
 				redrawSummary = false;
 			}
 
-			pollEvents();
-			const Common::Point mouse = getMousePos();
+			_engine->pollEvents();
+			const Common::Point mouse = _engine->getMousePos();
 
 			// Hover detection across all three columns
 			int newHoveredTheme = -1;
@@ -966,7 +993,7 @@ void CryOmni3DEngine_Egypt::startDocumentationMode() {
 			if (redrawSummary)
 				continue;
 
-			if (getCurrentMouseButton() == 1) {
+			if (_engine->getCurrentMouseButton() == 1) {
 				bool handled = false;
 
 				// Left column: select theme, reset mid selection
@@ -978,7 +1005,7 @@ void CryOmni3DEngine_Egypt::startDocumentationMode() {
 							hoveredMidIdx   = -1;
 							hoveredRightIdx = -1;
 						}
-						waitMouseRelease();
+						_engine->waitMouseRelease();
 						redrawSummary = true;
 						handled = true;
 					}
@@ -988,8 +1015,7 @@ void CryOmni3DEngine_Egypt::startDocumentationMode() {
 				for (uint j = 0; j < midBoxes.size() && !handled; ++j) {
 					if (midBoxes[j].contains(mouse)) {
 						const int childId = midChildren[j];
-						const bool hasSub =
-						        _documentationTree.find(childId) != _documentationTree.end();
+						const bool hasSub = _tree.find(childId) != _tree.end();
 						if (hasSub) {
 							selectedMidId   = childId;
 							hoveredRightIdx = -1;
@@ -998,7 +1024,7 @@ void CryOmni3DEngine_Egypt::startDocumentationMode() {
 							openTargetId = childId;
 							openTheme    = true;
 						}
-						waitMouseRelease();
+						_engine->waitMouseRelease();
 						handled = true;
 					}
 				}
@@ -1007,8 +1033,7 @@ void CryOmni3DEngine_Egypt::startDocumentationMode() {
 				for (uint k = 0; k < rightBoxes.size() && !handled; ++k) {
 					if (rightBoxes[k].contains(mouse)) {
 						const int childId = rightChildren[k];
-						const bool hasSub =
-						        _documentationTree.find(childId) != _documentationTree.end();
+						const bool hasSub = _tree.find(childId) != _tree.end();
 						if (hasSub) {
 							selectedMidId   = childId;
 							hoveredRightIdx = -1;
@@ -1017,13 +1042,13 @@ void CryOmni3DEngine_Egypt::startDocumentationMode() {
 							openTargetId = childId;
 							openTheme    = true;
 						}
-						waitMouseRelease();
+						_engine->waitMouseRelease();
 						handled = true;
 					}
 				}
 			}
 
-			const Common::KeyCode keycode = getNextKey().keycode;
+			const Common::KeyCode keycode = _engine->getNextKey().keycode;
 			if (keycode == Common::KEYCODE_ESCAPE)
 				exitDocumentation = true;
 
@@ -1039,13 +1064,13 @@ void CryOmni3DEngine_Egypt::startDocumentationMode() {
 		hoveredTheme    = -1;
 		hoveredMidIdx   = -1;
 		hoveredRightIdx = -1;
-		displayDocumentationById(openTargetId);
+		displayRecord(openTargetId);
 		openTargetId = -1;
 	}
 
-	clearKeys();
-	waitMouseRelease();
-	showMouse(false);
+	_engine->clearKeys();
+	_engine->waitMouseRelease();
+	_engine->showMouse(false);
 }
 
 } // End of namespace Egypt

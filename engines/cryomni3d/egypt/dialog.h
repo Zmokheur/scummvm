@@ -19,14 +19,30 @@
  *
  */
 
-#ifndef CRYOMNI3D_EGYPT_DIALOGUE_H
-#define CRYOMNI3D_EGYPT_DIALOGUE_H
+#ifndef CRYOMNI3D_EGYPT_DIALOG_H
+#define CRYOMNI3D_EGYPT_DIALOG_H
+
+#include "audio/mixer.h"
 
 #include "common/array.h"
+#include "common/hash-str.h"
+#include "common/hashmap.h"
 #include "common/str.h"
+
+#include "graphics/surface.h"
+
+namespace Common {
+class Path;
+}
+
+namespace Graphics {
+class ManagedSurface;
+}
 
 namespace CryOmni3D {
 namespace Egypt {
+
+class CryOmni3DEngine_Egypt;
 
 struct EgyptDialogNode {
 	Common::String label;
@@ -58,10 +74,61 @@ struct EgyptSycEvent {
 // Outcome produced by executing a single dialogue node's commands.
 // The caller displays node.text (if non-empty) then acts on this.
 enum EgyptDialogResult {
-	kDlgEnd,      // end command — close dialogue
+	kDlgEnd,      // end command - close dialogue
 	kDlgJump,     // goto single label  (outNextLabel is set)
 	kDlgChoices,  // goto with Ramose labels (outChoices is populated)
-	kDlgShow      // show command — for future use (treated as end for now)
+	kDlgShow      // show command - for future use (treated as end for now)
+};
+
+// NPC dialogue system: Level.txt dialogue trees, TGA/SPA/SPB portrait
+// rendering, APC voice playback and SYC mouth synchronisation.
+// This is Egypt's own system (the shared GTO DialogsManager does not
+// match the game's data formats). Friend-manager pattern: reads game
+// variables and the event pump through the engine pointer.
+class Egypt_Dialog {
+public:
+	explicit Egypt_Dialog(CryOmni3DEngine_Egypt *engine) : _engine(engine) {}
+	~Egypt_Dialog() { _tga.free(); }
+
+	// Runs a full dialogue starting at the given Level.txt label
+	void run(const Common::String &startLabel);
+
+	// Invalidate the cached Level.txt (called when a new game session starts)
+	void resetLevelCache() { _levelLoaded = false; }
+
+private:
+	bool loadLevelTxt();
+	const EgyptDialogNode *findNode(const Common::String &label) const;
+	EgyptDialogResult executeNode(const Common::String &label,
+	                              Common::String &outText,
+	                              Common::Array<EgyptDialogChoice> &outChoices,
+	                              Common::String &outNextLabel);
+	bool loadSprite(const Common::Path &path, EgyptDialogSprite &out);
+	void loadSpeaker(const Common::String &speakerName, int level);
+	void loadSyc(const Common::String &label);
+	void blitSpriteFrame(Graphics::ManagedSurface &dst,
+	                     const EgyptDialogSprite &sprite, uint frame);
+	void playVoice(const Common::String &label);
+	void stopVoice();
+	void showText(const Graphics::ManagedSurface &background, const Common::String &text);
+	int  showChoices(const Graphics::ManagedSurface &background,
+	                 const Common::Array<EgyptDialogChoice> &choices);
+
+	CryOmni3DEngine_Egypt *_engine;
+
+	Common::HashMap<Common::String, EgyptDialogNode,
+	                Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo> _nodes;
+	bool _levelLoaded = false;
+	Graphics::Surface _tga;          // static base portrait image (TGA)
+	EgyptDialogSprite _spa;          // face/idle patches (TXEN/RLE)
+	EgyptDialogSprite _spb;          // mouth patches (TXEN/RLE, driven by SYC)
+	Common::String    _speakerName;
+	Audio::SoundHandle _voiceHandle;
+	Common::Array<EgyptSycEvent> _sycEvents;
+	uint _sycEventIdx = 0;
+	uint _idleFrameIdx = 0;          // index into the idle mouth frame cycle (SPA)
+	uint32 _idleNextMs = 0;          // next idle animation tick
+	uint32 _nodeStartMs = 0;         // timestamp when the current node started
 };
 
 } // End of namespace Egypt

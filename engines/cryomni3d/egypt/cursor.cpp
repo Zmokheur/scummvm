@@ -19,6 +19,7 @@
  *
  */
 
+#include "common/debug.h"
 #include "common/textconsole.h"
 
 #include "cryomni3d/egypt/engine.h"
@@ -27,20 +28,16 @@ namespace CryOmni3D {
 namespace Egypt {
 
 void CryOmni3DEngine_Egypt::setupSprites() {
-	for (Common::Array<EgyptInterfaceSprite *>::iterator it = _interfaceSprites.begin();
-	     it != _interfaceSprites.end(); ++it) {
-		delete *it;
-	}
-	_interfaceSprites.clear();
+	if (!_spriteLoader.loadInterfaceSprites(getFilePath(kFileTypeInterfaceSprites)))
+		error("Egypt: cannot load required interface sprites from SPRITE/INTERFAC.SPR");
 
-	if (!loadInterfaceSprites(Common::Path("SPRITE/INTERFAC.SPR"))) {
-		warning("Egypt: failed to load interface sprites from INTERFAC.SPR");
-		return;
-	}
+	debugC(kDebugFile, "Egypt: loaded %u interface sprite(s) from INTERFAC.SPR",
+	       _spriteLoader.interfaceSpriteCount());
+	setInterfaceCursor(kEgyptCursorDefault);
+}
 
-	warning("Egypt: loaded %u interface sprite(s) from INTERFAC.SPR", _interfaceSprites.size());
-	if (!_interfaceSprites.empty())
-		setInterfaceCursor(kEgyptCursorDefault);
+bool CryOmni3DEngine_Egypt::setInterfaceCursor(uint spriteId) const {
+	return _spriteLoader.setInterfaceCursor(spriteId);
 }
 
 uint CryOmni3DEngine_Egypt::getCursorFrameForZone(const EgyptZone &zone) const {
@@ -82,7 +79,7 @@ uint CryOmni3DEngine_Egypt::getCursorFrameForHeldObject(int heldObjectId, bool v
 	if (variant)
 		frame += 0x39;
 
-	if (frame < 0 || (uint)frame >= _interfaceSprites.size()) {
+	if (frame < 0 || (uint)frame >= _spriteLoader.interfaceSpriteCount()) {
 		warning("Egypt: invalid interface cursor frame %d for held object %d",
 		        frame, heldObjectId);
 		return kEgyptCursorDefault;

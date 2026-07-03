@@ -22,6 +22,7 @@
 #include "audio/decoders/apc.h"
 #include "audio/mixer.h"
 
+#include "common/debug.h"
 #include "common/endian.h"
 #include "common/events.h"
 #include "common/file.h"
@@ -38,22 +39,22 @@
 #include "image/tga.h"
 
 #include "cryomni3d/egypt/engine.h"
-#include "cryomni3d/image/cpx5.h"
+#include "cryomni3d/egypt/support/image_loader.h"
 
 namespace CryOmni3D {
 namespace Egypt {
 
-// ── Level.txt loading ─────────────────────────────────────────────────────────
+// --- Level.txt loading ---
 
-bool CryOmni3DEngine_Egypt::loadLevelTxt() {
+bool Egypt_Dialog::loadLevelTxt() {
 	Common::File file;
 	// EXE builds: ref\FR\Level.txt (0x413080)
-	if (!file.open(Common::Path("ref/FR/Level.txt"))) {
+	if (!file.open(_engine->getFilePath(kFileTypeLevelTxt))) {
 		warning("Egypt: failed to open ref/FR/Level.txt");
 		return false;
 	}
 
-	_dialogueNodes.clear();
+	_nodes.clear();
 
 	EgyptDialogNode current;
 	bool inBlock = false;
@@ -77,7 +78,7 @@ bool CryOmni3DEngine_Egypt::loadLevelTxt() {
 		    trimmed.find(' ') == Common::String::npos &&
 		    trimmed.find('\t') == Common::String::npos) {
 			if (inBlock && !current.label.empty())
-				_dialogueNodes[current.label] = current;
+				_nodes[current.label] = current;
 
 			current = EgyptDialogNode();
 			current.label = trimmed.substr(0, trimmed.size() - 1);
@@ -103,7 +104,7 @@ bool CryOmni3DEngine_Egypt::loadLevelTxt() {
 			} else {
 				warning("Egypt: Level.txt label '%s': expected '<>' text line, got: %s",
 				        current.label.c_str(), trimmed.c_str());
-				textSeen = true; // recover — treat as command
+				textSeen = true; // recover - treat as command
 				current.commands.push_back(trimmed);
 			}
 			continue;
@@ -113,26 +114,26 @@ bool CryOmni3DEngine_Egypt::loadLevelTxt() {
 	}
 
 	if (inBlock && !current.label.empty())
-		_dialogueNodes[current.label] = current;
+		_nodes[current.label] = current;
 
-	warning("Egypt: Level.txt loaded — %u nodes", _dialogueNodes.size());
-	return !_dialogueNodes.empty();
+	debugC(kDebugFile, "Egypt: Level.txt loaded - %u nodes", _nodes.size());
+	return !_nodes.empty();
 }
 
-// ── Node lookup ───────────────────────────────────────────────────────────────
+// --- Node lookup ---
 
-const EgyptDialogNode *CryOmni3DEngine_Egypt::findDialogNode(const Common::String &label) const {
+const EgyptDialogNode *Egypt_Dialog::findNode(const Common::String &label) const {
 	Common::String key = label;
 	key.toLowercase();
 	Common::HashMap<Common::String, EgyptDialogNode,
 	    Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo>::const_iterator it =
-	    _dialogueNodes.find(key);
-	if (it != _dialogueNodes.end())
+	    _nodes.find(key);
+	if (it != _nodes.end())
 		return &it->_value;
 	return nullptr;
 }
 
-// ── Ramose detection ──────────────────────────────────────────────────────────
+// --- Ramose detection ---
 
 // Labels whose characters at positions [1..2] are "ra" (case-insensitive) are
 // Ramose player-reply options (EXE 0x413140).  Examples: sra0001, dra0101, ara0503.
@@ -142,10 +143,10 @@ static bool isRamoseChoiceLabel(const Common::String &label) {
 	       (label[2] == 'a' || label[2] == 'A');
 }
 
-// ── Speaker FLC mapping ───────────────────────────────────────────────────────
+// --- Speaker FLC mapping ---
 
-// EXE 0x413930: dispatch par famille (label[0]) puis code (label[1..2]).
-// Certains codes sont ambigus entre familles (PT, VI, IN) — le contexte famille est requis.
+// EXE 0x413930: dispatch by family (label[0]) then code (label[1..2]).
+// Some codes are ambiguous between families (PT, VI, IN) - the family context is required.
 static const char *resolveSpeakerFlc(const Common::String &label) {
 	if (label.size() < 3)
 		return nullptr;
@@ -154,17 +155,17 @@ static const char *resolveSpeakerFlc(const Common::String &label) {
 	const char c1     = (char)toupper((unsigned char)label[1]);
 	const char c2     = (char)toupper((unsigned char)label[2]);
 
-	// RAMOSE est le speaker Ramose dans toutes les familles (labels *RA*)
+	// RAMOSE is the Ramose speaker in every family (labels *RA*)
 	if (c1 == 'R' && c2 == 'A')
 		return "RAMOSE";
 
 	struct Entry { char family; char c1; char c2; const char *name; };
 	static const Entry kTable[] = {
-		// Famille S
+		// Family S
 		{ 'S', 'M', 'T', "MONTOUME" },
 		{ 'S', 'I', 'M', "IMENAKHT" },
 		{ 'S', 'I', 'N', "INHERKHA" },
-		// Famille D (exclusif)
+		// Family D (exclusive)
 		{ 'D', 'C', 'A', "CABARETI" },
 		{ 'D', 'O', 'U', "OUVRIERE" },
 		{ 'D', 'P', 'E', "PENMENEF" },
@@ -172,12 +173,12 @@ static const char *resolveSpeakerFlc(const Common::String &label) {
 		{ 'D', 'V', 'I', "VIEUX"    },
 		{ 'D', 'E', 'N', "ENFANT"   },
 		{ 'D', 'O', 'C', "COLERE"   },
-		// D + A partagés
+		// D + A shared
 		{ 'D', 'E', 'A', "EMBAUMEU" },
 		{ 'D', 'E', 'M', "EMBAUMEU" },
 		{ 'A', 'E', 'A', "EMBAUMEU" },
 		{ 'A', 'E', 'M', "EMBAUMEU" },
-		// D + A + N partagés
+		// D + A + N shared
 		{ 'D', 'D', 'E', "DESSIN"   },
 		{ 'A', 'D', 'E', "DESSIN"   },
 		{ 'N', 'D', 'E', "DESSIN"   },
@@ -185,7 +186,7 @@ static const char *resolveSpeakerFlc(const Common::String &label) {
 		{ 'D', 'P', 'L', "PLEUREUS" },
 		{ 'A', 'P', 'L', "PLEUREUS" },
 		{ 'N', 'P', 'L', "PLEUREUS" },
-		// D + A + M partagés
+		// D + A + M shared
 		{ 'D', 'P', 'O', "PORTIER"  },
 		{ 'A', 'P', 'O', "PORTIER"  },
 		{ 'M', 'P', 'O', "PORTIER"  },
@@ -195,11 +196,11 @@ static const char *resolveSpeakerFlc(const Common::String &label) {
 		{ 'D', 'F', 'N', "FEMME"    },
 		{ 'A', 'F', 'N', "FEMME"    },
 		{ 'M', 'F', 'N', "FEMME"    },
-		// Famille M (exclusif)
+		// Family M (exclusive)
 		{ 'M', 'P', 'T', "PTAHEMEB" },
 		{ 'M', 'N', 'O', "NOBLE"    },
 		{ 'M', 'P', 'A', "PANAHESY" },
-		// Famille K
+		// Family K
 		{ 'K', 'C', 'O', "AMEROUTH" },
 		{ 'K', 'P', 'R', "PRETRE"   },
 		{ 'K', 'D', 'O', "DOYEN"    },
@@ -215,7 +216,7 @@ static const char *resolveSpeakerFlc(const Common::String &label) {
 	return nullptr;
 }
 
-// ── SYC phonème → frame bouche (EXE 0x4356a8, utilisé à l'étape 3) ───────────
+// --- SYC phoneme -> mouth frame (EXE 0x4356a8, used at step 3) ---
 
 static const uint kSycToMouthFrame[27] = {
 	1, 2, 2, 8, 2, 2, 11, 8, 3,
@@ -223,17 +224,17 @@ static const uint kSycToMouthFrame[27] = {
 	6, 7, 7, 8, 6, 10, 5, 0, 2
 };
 
-// Frames idle pour la bouche entre les phonèmes (EXE 0x435680)
+// Idle frames for the mouth between phonemes (EXE 0x435680)
 static const uint kIdleMouthFrames[10] = {
 	0, 1, 2, 3, 3, 3, 2, 1, 0, 0
 };
 
-// ── Node execution ────────────────────────────────────────────────────────────
+// --- Node execution ---
 
 // Runs the command list of one Level.txt block.
 // Sets outText to the block's <text>, then processes commands in order.
 // Returns the terminal action; caller shows outText (if non-empty) then acts.
-EgyptDialogResult CryOmni3DEngine_Egypt::executeDialogNode(
+EgyptDialogResult Egypt_Dialog::executeNode(
         const Common::String &label,
         Common::String &outText,
         Common::Array<EgyptDialogChoice> &outChoices,
@@ -243,14 +244,14 @@ EgyptDialogResult CryOmni3DEngine_Egypt::executeDialogNode(
 	outChoices.clear();
 	outNextLabel.clear();
 
-	const EgyptDialogNode *node = findDialogNode(label);
+	const EgyptDialogNode *node = findNode(label);
 	if (!node) {
 		warning("Egypt: dialogue label not found: %s", label.c_str());
 		return kDlgEnd;
 	}
 
 	const char *speaker = resolveSpeakerFlc(node->label);
-	warning("Egypt: dialogue node '%s' speaker=%s text='%s'",
+	debugC(kDebugVariable, "Egypt: dialogue node '%s' speaker=%s text='%s'",
 	        node->label.c_str(), speaker ? speaker : "?", node->text.c_str());
 
 	outText = node->text;
@@ -272,7 +273,7 @@ EgyptDialogResult CryOmni3DEngine_Egypt::executeDialogNode(
 			Common::String condition = expr.substr(0, gotoPos);
 			Common::String target = expr.substr(gotoPos + 6);
 			target.trim();
-			if (evaluateScriptCondition(condition)) {
+			if (_engine->evaluateScriptCondition(condition)) {
 				// Apply the same split/classify logic as the goto handler.
 				Common::Array<Common::String> targets;
 				Common::StringTokenizer ifTok(target, ",");
@@ -291,7 +292,7 @@ EgyptDialogResult CryOmni3DEngine_Egypt::executeDialogNode(
 					EgyptDialogChoice choice;
 					choice.targetLabel = targets[j];
 					choice.targetLabel.toLowercase();
-					const EgyptDialogNode *choiceNode = findDialogNode(targets[j]);
+					const EgyptDialogNode *choiceNode = findNode(targets[j]);
 					choice.displayText = choiceNode ? choiceNode->text : targets[j];
 					outChoices.push_back(choice);
 				}
@@ -301,7 +302,7 @@ EgyptDialogResult CryOmni3DEngine_Egypt::executeDialogNode(
 		}
 
 		if (cmd.hasPrefixIgnoreCase("let ")) {
-			setScriptVariable(cmd.substr(4));
+			_engine->setScriptVariable(cmd.substr(4));
 			continue;
 		}
 
@@ -337,7 +338,7 @@ EgyptDialogResult CryOmni3DEngine_Egypt::executeDialogNode(
 				EgyptDialogChoice choice;
 				choice.targetLabel = targets[j];
 				choice.targetLabel.toLowercase();
-				const EgyptDialogNode *choiceNode = findDialogNode(targets[j]);
+				const EgyptDialogNode *choiceNode = findNode(targets[j]);
 				choice.displayText = choiceNode ? choiceNode->text : targets[j];
 				outChoices.push_back(choice);
 			}
@@ -351,49 +352,27 @@ EgyptDialogResult CryOmni3DEngine_Egypt::executeDialogNode(
 		warning("Egypt: dialogue unknown command: %s", cmd.c_str());
 	}
 
-	// EXE: "DIALOGUE : Pas de correspondance en fin de dialogue" — treat as end.
+	// EXE: "DIALOGUE: No match at end of dialogue" - treat as end.
 	warning("Egypt: dialogue node '%s' has no end/goto", node->label.c_str());
 	return kDlgEnd;
 }
 
-// ── Portrait loading ──────────────────────────────────────────────────────────
+// --- Portrait loading ---
 
-// Ouvre un fichier CPx5 ou brut et place les données décompressées dans out.
-static bool loadRawOrCpx5(const Common::Path &path, Common::Array<byte> &data) {
-	Common::File file;
-	if (!file.open(path))
-		return false;
-
-	if (file.size() >= 4) {
-		char magic[4];
-		file.read(magic, 4);
-		file.seek(0);
-		if (memcmp(magic, "CPx5", 4) == 0)
-			return Image::Cpx5Decoder::decompress(file, data);
-	}
-
-	// Fichier non compressé
-	int32 size = file.size();
-	if (size <= 0)
-		return false;
-	data.resize((uint32)size);
-	return file.read(data.data(), (uint32)size) == (uint32)size;
-}
-
-// Charge un fichier SPA ou SPB.
-// Format : table de N entrées de 8 octets [uint32 offset][uint16 h][uint16 w],
-// où chaque offset pointe vers un bloc TXEN/RLE dans le même buffer.
-// Les données brutes (décompressées) sont conservées intactes pour le blit TXEN.
-bool CryOmni3DEngine_Egypt::loadDialogSprite(const Common::Path &path, EgyptDialogSprite &out) {
+// Loads an SPA or SPB file.
+// Format: table of N entries of 8 bytes [uint32 offset][uint16 h][uint16 w],
+// where each offset points to a TXEN/RLE block in the same buffer.
+// The raw (decompressed) data is kept intact for the TXEN blit.
+bool Egypt_Dialog::loadSprite(const Common::Path &path, EgyptDialogSprite &out) {
 	out.clear();
 
-	if (!loadRawOrCpx5(path, out.data))
+	if (!loadFileMaybeCpx5(path, out.data))
 		return false;
 
 	if (out.data.size() < 8)
 		return false;
 
-	// Le premier offset (table[0].offset) = taille de la table = frameCount * 8.
+	// The first offset (table[0].offset) = table size = frameCount * 8.
 	const uint32 firstOffset = READ_LE_UINT32(out.data.data());
 	if (firstOffset == 0 || (firstOffset % 8) != 0 || firstOffset > out.data.size())
 		return false;
@@ -402,21 +381,21 @@ bool CryOmni3DEngine_Egypt::loadDialogSprite(const Common::Path &path, EgyptDial
 	return true;
 }
 
-// Charge SPA + SPB pour speakerName au niveau donné (cache : ne recharge que si le nom change).
-void CryOmni3DEngine_Egypt::loadDialogSpeaker(const Common::String &speakerName, int level) {
-	if (speakerName == _dlgSpeakerName)
+// Loads SPA + SPB for speakerName at the given level (cache: only reloads when the name changes).
+void Egypt_Dialog::loadSpeaker(const Common::String &speakerName, int level) {
+	if (speakerName == _speakerName)
 		return;
 
-	_dlgTga.free();
-	_dlgSpa.clear();
-	_dlgSpb.clear();
-	_dlgSpeakerName = speakerName;
+	_tga.free();
+	_spa.clear();
+	_spb.clear();
+	_speakerName = speakerName;
 
 	if (speakerName.empty() || level < 1 || level > 6)
 		return;
 
-	// Chemin réel confirmé : SPRITE/LEVELx/<scene>/<PERSONNAGE>.SPA/SPB/TGA
-	const Common::String &sceneName = _currentScene.name;
+	// Confirmed actual path: SPRITE/LEVELx/<scene>/<PERSONNAGE>.SPA/SPB/TGA
+	const Common::String &sceneName = _engine->_currentScene.name;
 	if (sceneName.empty())
 		return;
 
@@ -427,16 +406,16 @@ void CryOmni3DEngine_Egypt::loadDialogSpeaker(const Common::String &speakerName,
 	Common::Path spbPath(Common::String::format("SPRITE/LEVEL%d/%s/%s.SPB",
 	                                             level, sceneName.c_str(), speakerName.c_str()));
 
-	// TGA : image de base statique du personnage.
-	// Les fichiers .TGA sont CPx5-compressés sur disque — décompresser d'abord,
-	// puis décoder le TGA standard depuis un MemoryReadStream.
+	// TGA: static base image of the character.
+	// The .TGA files are CPx5-compressed on disk - decompress first,
+	// then decode the standard TGA from a MemoryReadStream.
 	{
 		Common::Array<byte> tgaData;
-		if (loadRawOrCpx5(tgaPath, tgaData)) {
+		if (loadFileMaybeCpx5(tgaPath, tgaData)) {
 			Common::MemoryReadStream tgaStream(tgaData.data(), tgaData.size());
 			Image::TGADecoder tgaDecoder;
 			if (tgaDecoder.loadStream(tgaStream))
-				_dlgTga.copyFrom(*tgaDecoder.getSurface());
+				_tga.copyFrom(*tgaDecoder.getSurface());
 			else
 				warning("Egypt: failed to decode TGA for %s (level %d)", speakerName.c_str(), level);
 			tgaDecoder.destroy();
@@ -445,16 +424,16 @@ void CryOmni3DEngine_Egypt::loadDialogSpeaker(const Common::String &speakerName,
 		}
 	}
 
-	if (!loadDialogSprite(spaPath, _dlgSpa))
+	if (!loadSprite(spaPath, _spa))
 		warning("Egypt: no SPA portrait for %s (level %d)", speakerName.c_str(), level);
-	if (!loadDialogSprite(spbPath, _dlgSpb))
+	if (!loadSprite(spbPath, _spb))
 		warning("Egypt: no SPB portrait for %s (level %d)", speakerName.c_str(), level);
 }
 
-// Décode et blitte un patch TXEN/RLE d'une frame SPA ou SPB.
-// Chaque frame pointe vers un bloc "TXEN" contenant ses coordonnées écran et un flux RLE.
-// RLE : uint16 count (0=fin, 0xffff=ligne suivante), uint16 xOffset, puis count×uint16 RGB565.
-void CryOmni3DEngine_Egypt::blitDialogSpriteFrame(Graphics::ManagedSurface &dst,
+// Decodes and blits a TXEN/RLE patch from an SPA or SPB frame.
+// Each frame points to a "TXEN" block containing its screen coordinates and an RLE stream.
+// RLE: uint16 count (0=end, 0xffff=next line), uint16 xOffset, then count x uint16 RGB565.
+void Egypt_Dialog::blitSpriteFrame(Graphics::ManagedSurface &dst,
                                                    const EgyptDialogSprite &sprite,
                                                    uint frame) {
 	if (sprite.empty() || frame >= sprite.frameCount)
@@ -462,16 +441,16 @@ void CryOmni3DEngine_Egypt::blitDialogSpriteFrame(Graphics::ManagedSurface &dst,
 
 	const uint32 offset = READ_LE_UINT32(sprite.data.data() + frame * 8);
 
-	// Entrée sentinelle : offset pointe à EOF (ex : SPB frame 11 pour MONTOUME).
-	// L'EXE saute le dessin dans ce cas.
+	// Sentinel entry: offset points to EOF (e.g. SPB frame 11 for MONTOUME).
+	// The EXE skips drawing in this case.
 	if (offset + 12 > sprite.data.size())
 		return;
 
 	const byte *p   = sprite.data.data() + offset;
 	const byte *end = sprite.data.data() + sprite.data.size();
 
-	// En-tête TXEN : [char[4] marker][int16 y][int16 x][uint16 h][uint16 w]
-	// Les coordonnées sont des positions absolues sur l'écran 640×480.
+	// TXEN header: [char[4] marker][int16 y][int16 x][uint16 h][uint16 w]
+	// The coordinates are absolute positions on the 640x480 screen.
 	const int baseY = (int)READ_LE_INT16(p + 4);
 	const int baseX = (int)READ_LE_INT16(p + 6);
 	p += 12;
@@ -507,7 +486,7 @@ void CryOmni3DEngine_Egypt::blitDialogSpriteFrame(Graphics::ManagedSurface &dst,
 			if (px < 0 || py < 0 || px >= dst.w || py >= dst.h)
 				continue;
 
-			// Interpréter comme RGB565
+			// Interpret as RGB565
 			const uint8 r = (uint8)(((srcColor >> 11) & 0x1f) * 255 / 31);
 			const uint8 g = (uint8)(((srcColor >>  5) & 0x3f) * 255 / 63);
 			const uint8 b = (uint8)( (srcColor        & 0x1f) * 255 / 31);
@@ -523,22 +502,21 @@ void CryOmni3DEngine_Egypt::blitDialogSpriteFrame(Graphics::ManagedSurface &dst,
 	}
 }
 
-// ── Voix APC ─────────────────────────────────────────────────────────────────
+// --- APC voice ---
 
-// Charge et lance sound/FR/<label>.apc via le mixer (canal kSpeechSoundType).
-void CryOmni3DEngine_Egypt::playDialogVoice(const Common::String &label) {
-	stopDialogVoice();
+// Loads and plays sound/FR/<label>.apc via the mixer (kSpeechSoundType channel).
+void Egypt_Dialog::playVoice(const Common::String &label) {
+	stopVoice();
 
 	Common::File file;
-	Common::Path path(Common::String::format("sound/FR/%s.apc", label.c_str()));
-	if (!file.open(path))
+	if (!file.open(_engine->getFilePath(kFileTypeVoice, label)))
 		return;
 
 	Audio::PacketizedAudioStream *stream = Audio::makeAPCStream(file);
 	if (!stream)
 		return;
 
-	// Après lecture du header (32 octets), le reste du fichier est l'audio ADPCM.
+	// After reading the header (32 bytes), the rest of the file is ADPCM audio.
 	int32 remaining = (int32)(file.size() - file.pos());
 	if (remaining > 0) {
 		byte *buf = new byte[(uint32)remaining];
@@ -547,22 +525,22 @@ void CryOmni3DEngine_Egypt::playDialogVoice(const Common::String &label) {
 	}
 	stream->finish();
 
-	_mixer->playStream(Audio::Mixer::kSpeechSoundType, &_dlgVoiceHandle, stream);
+	_engine->_mixer->playStream(Audio::Mixer::kSpeechSoundType, &_voiceHandle, stream);
 }
 
-void CryOmni3DEngine_Egypt::stopDialogVoice() {
-	if (_mixer->isSoundHandleActive(_dlgVoiceHandle))
-		_mixer->stopHandle(_dlgVoiceHandle);
+void Egypt_Dialog::stopVoice() {
+	if (_engine->_mixer->isSoundHandleActive(_voiceHandle))
+		_engine->_mixer->stopHandle(_voiceHandle);
 }
 
-// ── SYC mouth sync ────────────────────────────────────────────────────────────
+// --- SYC mouth sync ---
 
-// Charge le fichier SYC pour un label donné.
-// Fallback : syc/FR/<label>.syc → sound/FR/<label>.syc → sound/FR/null.syc
-// Format : 0x98 octets d'en-tête ignorés, puis enregistrements de 12 octets.
-void CryOmni3DEngine_Egypt::loadDialogSyc(const Common::String &label) {
-	_dlgSycEvents.clear();
-	_dlgSycEventIdx = 0;
+// Loads the SYC file for a given label.
+// Fallback: syc/FR/<label>.syc -> sound/FR/<label>.syc -> sound/FR/null.syc
+// Format: 0x98 bytes of header ignored, then 12-byte records.
+void Egypt_Dialog::loadSyc(const Common::String &label) {
+	_sycEvents.clear();
+	_sycEventIdx = 0;
 
 	Common::File file;
 	if (!file.open(Common::Path(Common::String::format("syc/FR/%s.syc", label.c_str()))))
@@ -578,12 +556,12 @@ void CryOmni3DEngine_Egypt::loadDialogSyc(const Common::String &label) {
 		EgyptSycEvent ev;
 		ev.timeMs      = file.readUint32LE();
 		ev.phonemeCode = file.readUint32LE();
-		file.readUint32LE(); // unknown, ignoré
-		_dlgSycEvents.push_back(ev);
+		file.readUint32LE(); // unknown, ignored
+		_sycEvents.push_back(ev);
 	}
 }
 
-// ── Text rendering helpers ────────────────────────────────────────────────────
+// --- Text rendering helpers ---
 
 namespace {
 
@@ -591,7 +569,7 @@ const int kDialogTextX      = 4;
 const int kDialogTextWidth  = 630;
 const int kDialogBoxTop     = 320;   // text area starts at y=320 on 640x480 screen
 const int kDialogPadding    = 6;
-const uint32 kColorNpcText  = 0xFFFFFFFF; // white — overridden to screen format in use
+const uint32 kColorNpcText  = 0xFFFFFFFF; // white - overridden to screen format in use
 const uint32 kColorChoice   = 0xFFFFFF00; // yellow
 const uint32 kColorHovered  = 0xFFFFCC33; // bright amber
 const uint32 kColorBoxBg    = 0xFF101010; // near-black
@@ -603,11 +581,11 @@ inline Common::Rect dialogBoxRect() {
 
 } // anonymous namespace
 
-// ── Text display with typewriter ──────────────────────────────────────────────
+// --- Text display with typewriter ---
 
 // Displays text in the bottom text area over the background snapshot.
 // Returns when the player clicks or presses Space/Return.
-void CryOmni3DEngine_Egypt::showDialogText(const Graphics::ManagedSurface &background,
+void Egypt_Dialog::showText(const Graphics::ManagedSurface &background,
                                            const Common::String &text) {
 	if (text.empty())
 		return;
@@ -627,7 +605,7 @@ void CryOmni3DEngine_Egypt::showDialogText(const Graphics::ManagedSurface &backg
 
 	const int lineH    = font->getFontHeight() + 2;
 	const int totalH   = (int)lines.size() * lineH + kDialogPadding * 2;
-	const int boxTop   = MAX(kDialogBoxTop, 480 - totalH - 4);
+	const int boxTop   = MAX(kDialogBoxTop, kScreenHeight - totalH - 4);
 	const Graphics::PixelFormat &fmt = g_system->getScreenFormat();
 
 	// Typewriter state
@@ -636,36 +614,36 @@ void CryOmni3DEngine_Egypt::showDialogText(const Graphics::ManagedSurface &backg
 	uint32 startMs = g_system->getMillis();
 	bool fullTextShown = false;
 	bool waitingForAdvance = false;
-	// Si une voix a été lancée, on auto-avance quand elle s'arrête.
-	// Si pas de voix, on attend le clic du joueur.
-	const bool voiceStarted = _mixer->isSoundHandleActive(_dlgVoiceHandle);
+	// If a voice was started, we auto-advance when it stops.
+	// If there is no voice, we wait for the player's click.
+	const bool voiceStarted = _engine->_mixer->isSoundHandleActive(_voiceHandle);
 
 	// Consume any click that triggered this dialog so the loop doesn't
 	// immediately treat it as a "skip text" input.
-	waitMouseRelease();
+	_engine->waitMouseRelease();
 
 	// Working surface: full-screen, kept in sync with background + overlay each frame.
 	Graphics::ManagedSurface surface(640, 480, fmt);
 
-	while (!shouldAbort()) {
-		pollEvents();
+	while (!_engine->shouldAbort()) {
+		_engine->pollEvents();
 
-		Common::KeyState key = getNextKey();
+		Common::KeyState key = _engine->getNextKey();
 		const bool spaceOrEnter =
 		    key.keycode == Common::KEYCODE_SPACE ||
 		    key.keycode == Common::KEYCODE_RETURN ||
 		    key.keycode == Common::KEYCODE_KP_ENTER;
 
-		if (spaceOrEnter || getCurrentMouseButton() == 1) {
+		if (spaceOrEnter || _engine->getCurrentMouseButton() == 1) {
 			if (!fullTextShown) {
-				// EXE 0x40d9a0(1) : stoppe la voix + SYC quand on accélère le texte
+				// EXE 0x40d9a0(1): stops the voice + SYC when the text is fast-forwarded
 				fullTextShown = true;
-				stopDialogVoice();
-				_dlgSycEvents.clear();
-				_dlgSycEventIdx = 0;
+				stopVoice();
+				_sycEvents.clear();
+				_sycEventIdx = 0;
 			} else if (waitingForAdvance) {
-				stopDialogVoice();
-				waitMouseRelease();
+				stopVoice();
+				_engine->waitMouseRelease();
 				break;
 			}
 		}
@@ -695,40 +673,40 @@ void CryOmni3DEngine_Egypt::showDialogText(const Graphics::ManagedSurface &backg
 		// Render: blit background, draw portrait, draw overlay box, draw text.
 		surface.blitFrom(background);
 
-		// Portrait : TGA (base statique) → SPB (bouche, frame SYC) → SPA (visage idle).
-		// Ordre conforme EXE 0x40a0b0 : SPB puis SPA sur le TGA.
+		// Portrait: TGA (static base) -> SPB (mouth, SYC frame) -> SPA (idle face).
+		// Order matches EXE 0x40a0b0: SPB then SPA on top of the TGA.
 
-		// Frame bouche : pilotée par SYC, fallback 2.
+		// Mouth frame: driven by SYC, fallback 2.
 		uint mouthFrame = 2;
-		if (!_dlgSycEvents.empty()) {
-			const uint32 elapsed = g_system->getMillis() - _dlgNodeStartMs;
-			// Avancer jusqu'au dernier événement dont le temps ajusté <= elapsed.
-			while (_dlgSycEventIdx + 1 < _dlgSycEvents.size()) {
-				uint32 nextT = _dlgSycEvents[_dlgSycEventIdx + 1].timeMs;
+		if (!_sycEvents.empty()) {
+			const uint32 elapsed = g_system->getMillis() - _nodeStartMs;
+			// Advance to the last event whose adjusted time <= elapsed.
+			while (_sycEventIdx + 1 < _sycEvents.size()) {
+				uint32 nextT = _sycEvents[_sycEventIdx + 1].timeMs;
 				if (nextT >= 0x122u) nextT -= 0x122u;
 				if (nextT <= elapsed)
-					++_dlgSycEventIdx;
+					++_sycEventIdx;
 				else
 					break;
 			}
-			const uint32 code = _dlgSycEvents[_dlgSycEventIdx].phonemeCode;
+			const uint32 code = _sycEvents[_sycEventIdx].phonemeCode;
 			mouthFrame = (code < 27u) ? kSycToMouthFrame[code] : 2u;
 			if (mouthFrame > 11u) mouthFrame = 2u;
 		}
 
-		// Frame idle SPA : cycle via kIdleMouthFrames toutes les ~150 ms.
-		if (_dlgIdleNextMs == 0 || now >= _dlgIdleNextMs) {
-			_dlgIdleFrameIdx = (_dlgIdleFrameIdx + 1) % 10;
-			_dlgIdleNextMs = now + 150;
+		// Idle SPA frame: cycles via kIdleMouthFrames every ~150 ms.
+		if (_idleNextMs == 0 || now >= _idleNextMs) {
+			_idleFrameIdx = (_idleFrameIdx + 1) % 10;
+			_idleNextMs = now + 150;
 		}
-		const uint idleFrame = kIdleMouthFrames[_dlgIdleFrameIdx];
+		const uint idleFrame = kIdleMouthFrames[_idleFrameIdx];
 
-		if (_dlgTga.w > 0)
-			surface.blitFrom(_dlgTga);
-		if (!_dlgSpb.empty() && mouthFrame != 11u)
-			blitDialogSpriteFrame(surface, _dlgSpb, mouthFrame);
-		if (!_dlgSpa.empty())
-			blitDialogSpriteFrame(surface, _dlgSpa, idleFrame);
+		if (_tga.w > 0)
+			surface.blitFrom(_tga);
+		if (!_spb.empty() && mouthFrame != 11u)
+			blitSpriteFrame(surface, _spb, mouthFrame);
+		if (!_spa.empty())
+			blitSpriteFrame(surface, _spa, idleFrame);
 
 		const uint32 bgColor = fmt.RGBToColor(16, 16, 16);
 		const uint32 fgColor = fmt.RGBToColor(255, 255, 255);
@@ -738,23 +716,23 @@ void CryOmni3DEngine_Egypt::showDialogText(const Graphics::ManagedSurface &backg
 		for (uint li = 0; li < visibleLines.size(); ++li, y += lineH)
 			font->drawString(&surface, visibleLines[li], kDialogTextX, y, kDialogTextWidth, fgColor);
 
-		g_system->copyRectToScreen(surface.getPixels(), surface.pitch, 0, 0, 640, 480);
+		g_system->copyRectToScreen(surface.getPixels(), surface.pitch, 0, 0, kScreenWidth, kScreenHeight);
 		g_system->updateScreen();
 
-		// Auto-avance quand la voix est terminée (et le texte entièrement affiché).
-		// Sans voix, on attend le clic du joueur.
-		if (waitingForAdvance && voiceStarted && !_mixer->isSoundHandleActive(_dlgVoiceHandle))
+		// Auto-advance when the voice has finished (and the text is fully displayed).
+		// Without a voice, we wait for the player's click.
+		if (waitingForAdvance && voiceStarted && !_engine->_mixer->isSoundHandleActive(_voiceHandle))
 			break;
 
 		g_system->delayMillis(16);
 	}
 }
 
-// ── Choices display ───────────────────────────────────────────────────────────
+// --- Choices display ---
 
 // Displays Ramose reply choices in the bottom area.
 // Returns the index of the chosen option, or -1 if the player aborted.
-int CryOmni3DEngine_Egypt::showDialogChoices(const Graphics::ManagedSurface &background,
+int Egypt_Dialog::showChoices(const Graphics::ManagedSurface &background,
                                              const Common::Array<EgyptDialogChoice> &choices) {
 	if (choices.empty())
 		return -1;
@@ -769,7 +747,7 @@ int CryOmni3DEngine_Egypt::showDialogChoices(const Graphics::ManagedSurface &bac
 
 	const int lineH      = font->getFontHeight() + 3;
 	const int totalH     = (int)choices.size() * lineH + kDialogPadding * 2;
-	const int boxTop     = MAX(kDialogBoxTop, 480 - totalH - 4);
+	const int boxTop     = MAX(kDialogBoxTop, kScreenHeight - totalH - 4);
 	const Graphics::PixelFormat &fmt = g_system->getScreenFormat();
 
 	// Pre-compute choice rects for hit-testing.
@@ -786,10 +764,10 @@ int CryOmni3DEngine_Egypt::showDialogChoices(const Graphics::ManagedSurface &bac
 
 	int hoveredIdx = -1;
 
-	while (!shouldAbort()) {
-		pollEvents();
+	while (!_engine->shouldAbort()) {
+		_engine->pollEvents();
 
-		Common::Point mouse = getMousePos();
+		Common::Point mouse = _engine->getMousePos();
 
 		// Update hovered choice.
 		hoveredIdx = -1;
@@ -800,14 +778,14 @@ int CryOmni3DEngine_Egypt::showDialogChoices(const Graphics::ManagedSurface &bac
 			}
 		}
 
-		// Render : TGA → SPB (bouche neutre f.2) → SPA (visage f.0) → choix.
+		// Render: TGA -> SPB (neutral mouth f.2) -> SPA (face f.0) -> choices.
 		surface.blitFrom(background);
-		if (_dlgTga.w > 0)
-			surface.blitFrom(_dlgTga);
-		if (!_dlgSpb.empty())
-			blitDialogSpriteFrame(surface, _dlgSpb, 2);
-		if (!_dlgSpa.empty())
-			blitDialogSpriteFrame(surface, _dlgSpa, 0);
+		if (_tga.w > 0)
+			surface.blitFrom(_tga);
+		if (!_spb.empty())
+			blitSpriteFrame(surface, _spb, 2);
+		if (!_spa.empty())
+			blitSpriteFrame(surface, _spa, 0);
 		surface.fillRect(Common::Rect(0, boxTop, 640, 480), bgColor);
 
 		for (uint i = 0; i < choices.size(); ++i) {
@@ -816,15 +794,15 @@ int CryOmni3DEngine_Egypt::showDialogChoices(const Graphics::ManagedSurface &bac
 			                 kDialogTextX, rects[i].top, kDialogTextWidth, color);
 		}
 
-		g_system->copyRectToScreen(surface.getPixels(), surface.pitch, 0, 0, 640, 480);
+		g_system->copyRectToScreen(surface.getPixels(), surface.pitch, 0, 0, kScreenWidth, kScreenHeight);
 		g_system->updateScreen();
 
-		if (getCurrentMouseButton() == 1 && hoveredIdx >= 0) {
-			waitMouseRelease();
+		if (_engine->getCurrentMouseButton() == 1 && hoveredIdx >= 0) {
+			_engine->waitMouseRelease();
 			return hoveredIdx;
 		}
 
-		Common::KeyState key = getNextKey();
+		Common::KeyState key = _engine->getNextKey();
 		if (key.keycode == Common::KEYCODE_ESCAPE)
 			return -1;
 
@@ -834,24 +812,24 @@ int CryOmni3DEngine_Egypt::showDialogChoices(const Graphics::ManagedSurface &bac
 	return -1;
 }
 
-// ── Main dialogue runner ──────────────────────────────────────────────────────
+// --- Main dialogue runner ---
 
-void CryOmni3DEngine_Egypt::runDialogue(const Common::String &startLabel) {
-	if (!_dialogueLevelLoaded) {
+void Egypt_Dialog::run(const Common::String &startLabel) {
+	if (!_levelLoaded) {
 		if (!loadLevelTxt()) {
 			warning("Egypt: runDialogue: Level.txt could not be loaded, aborting");
 			return;
 		}
-		_dialogueLevelLoaded = true;
+		_levelLoaded = true;
 	}
 
-	warning("Egypt: starting dialogue at label '%s'", startLabel.c_str());
+	debugC(kDebugVariable, "Egypt: starting dialogue at label '%s'", startLabel.c_str());
 
-	setInterfaceCursor(getDefaultCursorFrame());
-	showMouse(true);
+	_engine->setInterfaceCursor(_engine->getDefaultCursorFrame());
+	_engine->showMouse(true);
 
 	// Snapshot the current screen; every rendered dialogue frame starts from this.
-	Graphics::ManagedSurface background(640, 480, g_system->getScreenFormat());
+	Graphics::ManagedSurface background(kScreenWidth, kScreenHeight, g_system->getScreenFormat());
 	{
 		Graphics::Surface *screen = g_system->lockScreen();
 		if (screen) {
@@ -860,48 +838,48 @@ void CryOmni3DEngine_Egypt::runDialogue(const Common::String &startLabel) {
 		}
 	}
 
-	// Forcer le rechargement du portrait au premier nœud.
-	_dlgSpeakerName.clear();
-	const int level = getScriptVariableValue("Level");
+	// Force the portrait to reload for the first node.
+	_speakerName.clear();
+	const int level = _engine->getScriptVariableValue("Level");
 
 	Common::String currentLabel = startLabel;
 	currentLabel.toLowercase();
 
-	while (!shouldAbort()) {
+	while (!_engine->shouldAbort()) {
 		Common::String text;
 		Common::Array<EgyptDialogChoice> choices;
 		Common::String nextLabel;
 
-		EgyptDialogResult result = executeDialogNode(currentLabel, text, choices, nextLabel);
+		EgyptDialogResult result = executeNode(currentLabel, text, choices, nextLabel);
 
-		// Auto-chain: no text + direct jump → skip UI entirely.
+		// Auto-chain: no text + direct jump -> skip UI entirely.
 		if (result == kDlgJump && text.empty()) {
 			currentLabel = nextLabel;
 			continue;
 		}
 
-		// Résolution et chargement du portrait si le speaker a changé.
+		// Resolve and load the portrait if the speaker has changed.
 		const char *flcName = resolveSpeakerFlc(currentLabel);
-		loadDialogSpeaker(flcName ? flcName : "", level);
+		loadSpeaker(flcName ? flcName : "", level);
 
-		// Chargement SYC (synchro bouche) + reset état animation pour ce nœud.
-		loadDialogSyc(currentLabel);
-		_dlgNodeStartMs  = g_system->getMillis();
-		_dlgSycEventIdx  = 0;
-		_dlgIdleFrameIdx = 0;
-		_dlgIdleNextMs   = 0;
+		// Load SYC (mouth sync) + reset animation state for this node.
+		loadSyc(currentLabel);
+		_nodeStartMs  = g_system->getMillis();
+		_sycEventIdx  = 0;
+		_idleFrameIdx = 0;
+		_idleNextMs   = 0;
 
-		// Lancement de la voix pour ce label (EXE 0x40d5d0 / 0x40d6c0).
-		playDialogVoice(currentLabel);
+		// Start the voice for this label (EXE 0x40d5d0 / 0x40d6c0).
+		playVoice(currentLabel);
 
 		// Show NPC text (with typewriter), then act.
 		if (!text.empty())
-			showDialogText(background, text);
+			showText(background, text);
 
-		// Assurer l'arrêt de la voix après affichage (cas où user n'a pas skipé).
-		stopDialogVoice();
+		// Ensure the voice is stopped after display (in case the user did not skip).
+		stopVoice();
 
-		if (shouldAbort())
+		if (_engine->shouldAbort())
 			break;
 
 		switch (result) {
@@ -914,30 +892,30 @@ void CryOmni3DEngine_Egypt::runDialogue(const Common::String &startLabel) {
 			break;
 
 		case kDlgChoices: {
-			// Un seul choix : enchaîner automatiquement sans afficher le menu.
+			// Only one choice: chain automatically without showing the menu.
 			int picked = (choices.size() == 1)
 			             ? 0
-			             : showDialogChoices(background, choices);
+			             : showChoices(background, choices);
 			if (picked < 0)
 				goto done;
 			currentLabel = choices[picked].targetLabel;
-			// Le nœud Ramose choisi contient son propre texte + APC.
+			// The chosen Ramose node contains its own text + APC.
 			break;
 		}
 		}
 	}
 
 done:
-	stopDialogVoice();
-	_dlgTga.free();
-	_dlgSpa.clear();
-	_dlgSpb.clear();
-	_dlgSpeakerName.clear();
-	_dlgSycEvents.clear();
-	_dlgSycEventIdx  = 0;
-	_dlgIdleFrameIdx = 0;
-	_dlgIdleNextMs   = 0;
-	warning("Egypt: dialogue ended");
+	stopVoice();
+	_tga.free();
+	_spa.clear();
+	_spb.clear();
+	_speakerName.clear();
+	_sycEvents.clear();
+	_sycEventIdx  = 0;
+	_idleFrameIdx = 0;
+	_idleNextMs   = 0;
+	debugC(kDebugVariable, "Egypt: dialogue ended");
 }
 
 } // End of namespace Egypt

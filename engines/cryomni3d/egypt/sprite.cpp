@@ -19,12 +19,15 @@
  *
  */
 
+#include "common/debug.h"
 #include "common/endian.h"
 #include "common/file.h"
+#include "common/path.h"
 #include "common/textconsole.h"
 
-#include "cryomni3d/egypt/engine.h"
-#include "cryomni3d/image/cpx5.h"
+#include "cryomni3d/cryomni3d.h"
+#include "cryomni3d/egypt/sprite.h"
+#include "cryomni3d/egypt/support/cpx5.h"
 
 #include "graphics/cursorman.h"
 #include "graphics/surface.h"
@@ -32,13 +35,11 @@
 namespace CryOmni3D {
 namespace Egypt {
 
-namespace {
+const Graphics::PixelFormat kEgyptSpriteFormat(2, 5, 6, 5, 0, 11, 5, 0, 0);
 
-static const Graphics::PixelFormat kEgyptSpriteFormat(2, 5, 6, 5, 0, 11, 5, 0, 0);
+bool Egypt_SpriteLoader::loadInterfaceSprites(const Common::Path &filename) {
+	_interfaceSprites.clear();
 
-} // End of anonymous namespace
-
-bool CryOmni3DEngine_Egypt::loadInterfaceSprites(const Common::Path &filename) {
 	Common::File file;
 	if (!file.open(filename)) {
 		warning("Egypt: failed to open interface sprite file %s",
@@ -47,7 +48,7 @@ bool CryOmni3DEngine_Egypt::loadInterfaceSprites(const Common::Path &filename) {
 	}
 
 	Common::Array<byte> decompressed;
-	if (!Image::Cpx5Decoder::decompress(file, decompressed))
+	if (!Cpx5Decoder::decompress(file, decompressed))
 		return false;
 
 	if (decompressed.size() < 4) {
@@ -62,6 +63,7 @@ bool CryOmni3DEngine_Egypt::loadInterfaceSprites(const Common::Path &filename) {
 	}
 
 	const uint spriteCount = firstPixelOffset / 8;
+	_interfaceSprites.resize(spriteCount);
 	for (uint i = 0; i < spriteCount; ++i) {
 		const uint entryOffset = i * 8;
 		const uint32 pixelOffset = READ_LE_UINT32(decompressed.data() + entryOffset);
@@ -74,50 +76,48 @@ bool CryOmni3DEngine_Egypt::loadInterfaceSprites(const Common::Path &filename) {
 		if (width == 0 || height == 0 || pixelOffset + pixelDataSize > decompressed.size()) {
 			warning("Egypt: invalid interface sprite %u offset=0x%08x size=%ux%u",
 			        i, pixelOffset, width, height);
+			_interfaceSprites.clear();
 			return false;
 		}
 
-		EgyptInterfaceSprite *sprite = new EgyptInterfaceSprite();
-		sprite->surface.create(width, height, kEgyptSpriteFormat);
-		sprite->hotspotX = width / 2;
-		sprite->hotspotY = height / 2;
-		memcpy(sprite->surface.getPixels(), decompressed.data() + pixelOffset, pixelDataSize);
+		EgyptInterfaceSprite &sprite = _interfaceSprites[i];
+		sprite.surface.create(width, height, kEgyptSpriteFormat);
+		sprite.hotspotX = width / 2;
+		sprite.hotspotY = height / 2;
+		memcpy(sprite.surface.getPixels(), decompressed.data() + pixelOffset, pixelDataSize);
 
-		sprite->mask.resize(width * height);
+		sprite.mask.resize(width * height);
 		for (uint pixel = 0; pixel < width * height; ++pixel) {
 			const uint16 color = READ_LE_UINT16(decompressed.data() + pixelOffset + pixel * 2);
-			sprite->mask[pixel] = (color == 0) ? kCursorMaskTransparent : kCursorMaskOpaque;
+			sprite.mask[pixel] = (color == 0) ? kCursorMaskTransparent : kCursorMaskOpaque;
 		}
-
-		_interfaceSprites.push_back(sprite);
 	}
 
 	return true;
 }
 
-bool CryOmni3DEngine_Egypt::setInterfaceCursor(uint spriteId) const {
+bool Egypt_SpriteLoader::setInterfaceCursor(uint spriteId) const {
 	if (spriteId >= _interfaceSprites.size())
 		return false;
 
-	const EgyptInterfaceSprite &sprite = *_interfaceSprites[spriteId];
+	const EgyptInterfaceSprite &sprite = _interfaceSprites[spriteId];
 	CursorMan.replaceCursor(sprite.surface, sprite.hotspotX, sprite.hotspotY, 0, false,
 	                        sprite.mask.empty() ? nullptr : sprite.mask.data());
 	return true;
 }
 
-bool CryOmni3DEngine_Egypt::loadSceneOverlay(const Common::String &sceneName) {
+bool Egypt_SpriteLoader::loadSceneOverlay(const Common::String &sceneName, int level) {
 	_sceneOverlayData.clear();
 
 	Common::Path sprPath;
-	const int currentLevel = getScriptVariableValue("Level");
-	if (currentLevel >= 1 && currentLevel <= 6) {
-		Common::Path p(Common::String::format("SPRITE/LEVEL%d/%s.SPR", currentLevel, sceneName.c_str()));
+	if (level >= 1 && level <= 6) {
+		Common::Path p(Common::String::format("SPRITE/LEVEL%d/%s.SPR", level, sceneName.c_str()));
 		if (Common::File::exists(p))
 			sprPath = p;
 	}
 	if (sprPath.empty()) {
-		for (int level = 1; level <= 6; ++level) {
-			Common::Path p(Common::String::format("SPRITE/LEVEL%d/%s.SPR", level, sceneName.c_str()));
+		for (int lvl = 1; lvl <= 6; ++lvl) {
+			Common::Path p(Common::String::format("SPRITE/LEVEL%d/%s.SPR", lvl, sceneName.c_str()));
 			if (Common::File::exists(p)) {
 				sprPath = p;
 				break;
@@ -126,7 +126,7 @@ bool CryOmni3DEngine_Egypt::loadSceneOverlay(const Common::String &sceneName) {
 	}
 
 	if (sprPath.empty()) {
-		warning("Egypt: no overlay SPR found for scene %s", sceneName.c_str());
+		debugC(kDebugFile, "Egypt: no overlay SPR found for scene %s", sceneName.c_str());
 		return false;
 	}
 
@@ -137,19 +137,27 @@ bool CryOmni3DEngine_Egypt::loadSceneOverlay(const Common::String &sceneName) {
 		return false;
 	}
 
-	if (!Image::Cpx5Decoder::decompress(file, _sceneOverlayData)) {
+	if (!Cpx5Decoder::decompress(file, _sceneOverlayData)) {
 		warning("Egypt: failed to decompress overlay SPR %s",
 		        sprPath.toString(Common::Path::kNativeSeparator).c_str());
 		return false;
 	}
 
-	warning("Egypt: loaded overlay SPR %s (%u bytes)",
+	debugC(kDebugFile, "Egypt: loaded overlay SPR %s (%u bytes)",
 	        sprPath.toString(Common::Path::kNativeSeparator).c_str(),
 	        (uint)_sceneOverlayData.size());
 	return true;
 }
 
-void CryOmni3DEngine_Egypt::decodeOverlayFrame(uint frameIndex) {
+void Egypt_SpriteLoader::resetSceneState() {
+	_sceneOverlayData.clear();
+	_pendingOverlayPixels.clear();
+	_hasPendingOverlay = false;
+	_sceneSprPixels.clear();
+	_sceneSprDirty = false;
+}
+
+void Egypt_SpriteLoader::decodeOverlayFrame(uint frameIndex) {
 	_pendingOverlayPixels.clear();
 	_hasPendingOverlay = false;
 
@@ -182,8 +190,8 @@ void CryOmni3DEngine_Egypt::decodeOverlayFrame(uint frameIndex) {
 	const byte *ptr = data + pixelOffset;
 	const byte *end = data + dataSize;
 
-	// TXEN/RLE header — same format as SPA/SPB portrait patches.
-	// Coordinates are in screen space (640×480), rows go top-down.
+	// TXEN/RLE header - same format as SPA/SPB portrait patches.
+	// Coordinates are in screen space (640x480), rows go top-down.
 	int16 txenY = 0;
 	int16 txenX = 0;
 	if (ptr + 12 <= end) {
@@ -225,45 +233,47 @@ void CryOmni3DEngine_Egypt::decodeOverlayFrame(uint frameIndex) {
 	}
 
 	_hasPendingOverlay = !_pendingOverlayPixels.empty();
-	_overlayDirty = true;
-	warning("Egypt: decoded overlay frame %u → %u pixels", frameIndex, (uint)_pendingOverlayPixels.size());
+	debugC(kDebugFile, "Egypt: decoded overlay frame %u -> %u pixels", frameIndex, (uint)_pendingOverlayPixels.size());
 }
 
-void CryOmni3DEngine_Egypt::applyOverlayToSurface(Graphics::Surface &surface) const {
+// Expands one RGB565 pixel to the destination format and writes it
+static inline void writeRgb565Pixel(Graphics::Surface &surface, uint x, uint y, uint16 rgb565) {
+	const Graphics::PixelFormat &fmt = surface.format;
+	const uint8 r5 = (rgb565 >> 11) & 0x1f;
+	const uint8 g6 = (rgb565 >>  5) & 0x3f;
+	const uint8 b5 = (rgb565      ) & 0x1f;
+	const uint8 r = (r5 << 3) | (r5 >> 2);
+	const uint8 g = (g6 << 2) | (g6 >> 4);
+	const uint8 b = (b5 << 3) | (b5 >> 2);
+
+	const uint32 color = fmt.RGBToColor(r, g, b);
+	void *dst = surface.getBasePtr(x, y);
+	switch (fmt.bytesPerPixel) {
+	case 2:
+		WRITE_LE_UINT16(dst, (uint16)color);
+		break;
+	case 4:
+		WRITE_LE_UINT32(dst, color);
+		break;
+	default:
+		break;
+	}
+}
+
+void Egypt_SpriteLoader::applyOverlayToSurface(Graphics::Surface &surface) const {
 	if (!_hasPendingOverlay || _pendingOverlayPixels.empty()) return;
 
-	const Graphics::PixelFormat &fmt = surface.format;
 	const uint surfW = surface.w;
 	const uint surfH = surface.h;
 
 	for (uint i = 0; i < _pendingOverlayPixels.size(); i++) {
 		const EgyptPendingOverlayPixel &p = _pendingOverlayPixels[i];
 		if (p.x >= surfW || p.y >= surfH) continue;
-
-		// Expand RGB565 to 8-bit channels
-		const uint8 r5 = (p.rgb565 >> 11) & 0x1f;
-		const uint8 g6 = (p.rgb565 >>  5) & 0x3f;
-		const uint8 b5 = (p.rgb565      ) & 0x1f;
-		const uint8 r = (r5 << 3) | (r5 >> 2);
-		const uint8 g = (g6 << 2) | (g6 >> 4);
-		const uint8 b = (b5 << 3) | (b5 >> 2);
-
-		const uint32 color = fmt.RGBToColor(r, g, b);
-		void *dst = surface.getBasePtr(p.x, p.y);
-		switch (fmt.bytesPerPixel) {
-		case 2:
-			WRITE_LE_UINT16(dst, (uint16)color);
-			break;
-		case 4:
-			WRITE_LE_UINT32(dst, color);
-			break;
-		default:
-			break;
-		}
+		writeRgb565Pixel(surface, p.x, p.y, p.rgb565);
 	}
 }
 
-void CryOmni3DEngine_Egypt::decodeSceneSprFrame(uint frameIndex) {
+void Egypt_SpriteLoader::decodeSceneSprFrame(uint frameIndex) {
 	_sceneSprPixels.clear();
 	_sceneSprDirty = false;
 
@@ -339,14 +349,13 @@ void CryOmni3DEngine_Egypt::decodeSceneSprFrame(uint frameIndex) {
 	}
 
 	_sceneSprDirty = !_sceneSprPixels.empty();
-	warning("Egypt: decoded scene SPR frame %u → %u panorama pixels (txen x=%d y=%d)",
+	debugC(kDebugFile, "Egypt: decoded scene SPR frame %u -> %u panorama pixels (txen x=%d y=%d)",
 	        frameIndex, (uint)_sceneSprPixels.size(), (int)txenX, (int)txenY);
 }
 
-void CryOmni3DEngine_Egypt::applySceneSprToPanorama(Graphics::Surface &surface) const {
+void Egypt_SpriteLoader::applySceneSprToPanorama(Graphics::Surface &surface) const {
 	if (_sceneSprPixels.empty()) return;
 
-	const Graphics::PixelFormat &fmt = surface.format;
 	const uint surfW = (uint)surface.w;
 	const uint surfH = (uint)surface.h;
 
@@ -355,59 +364,20 @@ void CryOmni3DEngine_Egypt::applySceneSprToPanorama(Graphics::Surface &surface) 
 		// p.y is stored as txenY + rleLine; panorama Y is inverted: 767 - p.y
 		const uint panoramaY = (p.y <= 767) ? (767 - p.y) : 0;
 		if (p.x >= surfW || panoramaY >= surfH) continue;
-
-		const uint8 r5 = (p.rgb565 >> 11) & 0x1f;
-		const uint8 g6 = (p.rgb565 >>  5) & 0x3f;
-		const uint8 b5 = (p.rgb565      ) & 0x1f;
-		const uint8 r = (r5 << 3) | (r5 >> 2);
-		const uint8 g = (g6 << 2) | (g6 >> 4);
-		const uint8 b = (b5 << 3) | (b5 >> 2);
-
-		const uint32 color = fmt.RGBToColor(r, g, b);
-		void *dst = surface.getBasePtr(p.x, panoramaY);
-		switch (fmt.bytesPerPixel) {
-		case 2:
-			WRITE_LE_UINT16(dst, (uint16)color);
-			break;
-		case 4:
-			WRITE_LE_UINT32(dst, color);
-			break;
-		default:
-			break;
-		}
+		writeRgb565Pixel(surface, p.x, panoramaY, p.rgb565);
 	}
 }
 
-void CryOmni3DEngine_Egypt::applySceneSprToScreen(Graphics::Surface &surface) const {
+void Egypt_SpriteLoader::applySceneSprToScreen(Graphics::Surface &surface) const {
 	if (_sceneSprPixels.empty()) return;
 
-	const Graphics::PixelFormat &fmt = surface.format;
 	const uint surfW = (uint)surface.w;
 	const uint surfH = (uint)surface.h;
 
 	for (uint i = 0; i < _sceneSprPixels.size(); i++) {
 		const EgyptPendingOverlayPixel &p = _sceneSprPixels[i];
 		if (p.x >= surfW || p.y >= surfH) continue;
-
-		const uint8 r5 = (p.rgb565 >> 11) & 0x1f;
-		const uint8 g6 = (p.rgb565 >>  5) & 0x3f;
-		const uint8 b5 = (p.rgb565      ) & 0x1f;
-		const uint8 r = (r5 << 3) | (r5 >> 2);
-		const uint8 g = (g6 << 2) | (g6 >> 4);
-		const uint8 b = (b5 << 3) | (b5 >> 2);
-
-		const uint32 color = fmt.RGBToColor(r, g, b);
-		void *dst = surface.getBasePtr(p.x, p.y);
-		switch (fmt.bytesPerPixel) {
-		case 2:
-			WRITE_LE_UINT16(dst, (uint16)color);
-			break;
-		case 4:
-			WRITE_LE_UINT32(dst, color);
-			break;
-		default:
-			break;
-		}
+		writeRgb565Pixel(surface, p.x, p.y, p.rgb565);
 	}
 }
 

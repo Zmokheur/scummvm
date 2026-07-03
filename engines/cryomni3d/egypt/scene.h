@@ -29,14 +29,14 @@
 namespace CryOmni3D {
 namespace Egypt {
 
-// ── Asset types ───────────────────────────────────────────────────────────────
+// --- Asset types ---
 
 enum EgyptAssetKind {
-	kAssetWarpHNM,   // WARP/<scene>_24.HNM       — panorama 360°
-	kAssetBackTGA,   // SPRITE/LEVELx/<scene>.TGA  — fond fixe (CPx5)
-	kAssetSceneSPR,  // SPRITE/LEVELx/<scene>.SPR  — sprites de scène
-	kAssetCharSPRA,  // SPRITE/LEVELx/<scene>A.SPR — sprite personnage part A
-	kAssetCharSPRB   // SPRITE/LEVELx/<scene>B.SPR — sprite personnage part B
+	kAssetWarpHNM,   // WARP/<scene>_24.HNM       - 360-degree panorama
+	kAssetBackTGA,   // SPRITE/LEVELx/<scene>.TGA  - fixed background (CPx5)
+	kAssetSceneSPR,  // SPRITE/LEVELx/<scene>.SPR  - scene sprites
+	kAssetCharSPRA,  // SPRITE/LEVELx/<scene>A.SPR - character sprite part A
+	kAssetCharSPRB   // SPRITE/LEVELx/<scene>B.SPR - character sprite part B
 };
 
 struct EgyptSceneAsset {
@@ -45,7 +45,7 @@ struct EgyptSceneAsset {
 	bool           present = false;
 };
 
-// ── Zone structures ───────────────────────────────────────────────────────────
+// --- Zone structures ---
 
 // Extra rect for zones that appear several times with different rects (same id)
 struct EgyptZoneRect {
@@ -72,7 +72,7 @@ struct EgyptZone {
 	Common::Array<Common::String>  hnmSequence;   // ordered HNM tokens for ALLER_HNM_WARP
 };
 
-// ── Scene structures ──────────────────────────────────────────────────────────
+// --- Scene structures ---
 
 struct EgyptScene {
 	Common::String name;

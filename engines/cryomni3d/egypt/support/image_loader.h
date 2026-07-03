@@ -19,22 +19,34 @@
  *
  */
 
-#ifndef CRYOMNI3D_EGYPT_SUPPORT_CPX5_H
-#define CRYOMNI3D_EGYPT_SUPPORT_CPX5_H
+#ifndef CRYOMNI3D_EGYPT_SUPPORT_IMAGE_LOADER_H
+#define CRYOMNI3D_EGYPT_SUPPORT_IMAGE_LOADER_H
 
 #include "common/array.h"
 
 namespace Common {
-class SeekableReadStream;
+class Path;
+}
+
+namespace Graphics {
+class ManagedSurface;
 }
 
 namespace CryOmni3D {
 namespace Egypt {
 
-class Cpx5Decoder {
-public:
-	static bool decompress(Common::SeekableReadStream &stream, Common::Array<byte> &output);
-};
+// Egypt assets are optionally wrapped in a CPx5 compression container.
+// These helpers centralize the "sniff CPx5 magic, decompress, else use the
+// raw file" logic shared by menus, dialogues, documentation and panoramas.
+
+// Loads a file into data, transparently decompressing a CPx5 container.
+bool loadFileMaybeCpx5(const Common::Path &path, Common::Array<byte> &data);
+
+// Loads a TGA image (optionally CPx5-wrapped) and converts it to the
+// current screen format. With stretchToScreen the result is a full
+// 640x480 surface (image stretched, background cleared to black);
+// otherwise the surface keeps the image's own dimensions.
+bool loadTgaImage(const Common::Path &path, Graphics::ManagedSurface &surface, bool stretchToScreen);
 
 } // End of namespace Egypt
 } // End of namespace CryOmni3D

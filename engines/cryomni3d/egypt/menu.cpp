@@ -22,8 +22,8 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "common/debug.h"
 #include "common/file.h"
-#include "common/memstream.h"
 #include "common/system.h"
 #include "common/textconsole.h"
 
@@ -31,10 +31,9 @@
 #include "graphics/fontman.h"
 #include "graphics/managed_surface.h"
 
-#include "image/tga.h"
 
 #include "cryomni3d/egypt/engine.h"
-#include "cryomni3d/image/cpx5.h"
+#include "cryomni3d/egypt/support/image_loader.h"
 
 namespace CryOmni3D {
 namespace Egypt {
@@ -59,7 +58,6 @@ enum EgyptMenuEntry {
 	kEgyptMenuCount = 11
 };
 
-static const char *const kDebugLevelScenes[] = { "S00", "D01", "A02", "N01A", "M01", "K43" };
 
 void drawCenteredString(Graphics::ManagedSurface &surface, const Graphics::Font *font,
                         const Common::String &text, int y, uint32 color) {
@@ -196,93 +194,9 @@ Common::String CryOmni3DEngine_Egypt::getHoverTextForZone(const EgyptZone *zone)
 	return Common::String();
 }
 
-bool CryOmni3DEngine_Egypt::loadWrappedTgaSurface(const Common::Path &filename, Graphics::ManagedSurface &surface) const {
-	Common::File file;
-	if (!file.open(filename))
-		return false;
-
-	Common::Array<byte> decompressed;
-	byte magic[4] = {0, 0, 0, 0};
-	file.read(magic, sizeof(magic));
-	file.seek(0);
-
-	Image::TGADecoder decoder;
-	bool decoded = false;
-	if (memcmp(magic, "CPx5", sizeof(magic)) == 0) {
-		if (!Image::Cpx5Decoder::decompress(file, decompressed)) {
-			warning("Egypt: failed to decompress wrapped TGA %s",
-			        filename.toString(Common::Path::kNativeSeparator).c_str());
-			return false;
-		}
-
-		Common::MemoryReadStream stream(decompressed.data(), decompressed.size(), DisposeAfterUse::NO);
-		decoded = decoder.loadStream(stream);
-	} else {
-		decoded = decoder.loadStream(file);
-	}
-
-	if (!decoded) {
-		warning("Egypt: failed to decode TGA asset %s",
-		        filename.toString(Common::Path::kNativeSeparator).c_str());
-		return false;
-	}
-
-	Graphics::Surface *converted = nullptr;
-	if (decoder.hasPalette())
-		converted = decoder.getSurface()->convertTo(g_system->getScreenFormat(), decoder.getPalette().data(), decoder.getPalette().size());
-	else
-		converted = decoder.getSurface()->convertTo(g_system->getScreenFormat());
-
-	if (!converted)
-		return false;
-
-	surface.create(640, 480, g_system->getScreenFormat());
-	surface.clear(surface.format.RGBToColor(0, 0, 0));
-	surface.blitFrom(*converted, Common::Rect(0, 0, converted->w, converted->h), Common::Rect(0, 0, 640, 480));
-	delete converted;
-	return true;
-}
-
-bool CryOmni3DEngine_Egypt::loadWrappedTgaRaw(const Common::Path &filename, Graphics::ManagedSurface &surface) const {
-	Common::File file;
-	if (!file.open(filename))
-		return false;
-
-	Common::Array<byte> decompressed;
-	byte magic[4] = {0, 0, 0, 0};
-	file.read(magic, sizeof(magic));
-	file.seek(0);
-
-	Image::TGADecoder decoder;
-	bool decoded = false;
-	if (memcmp(magic, "CPx5", sizeof(magic)) == 0) {
-		if (!Image::Cpx5Decoder::decompress(file, decompressed))
-			return false;
-		Common::MemoryReadStream stream(decompressed.data(), decompressed.size(), DisposeAfterUse::NO);
-		decoded = decoder.loadStream(stream);
-	} else {
-		decoded = decoder.loadStream(file);
-	}
-	if (!decoded)
-		return false;
-
-	Graphics::Surface *converted = nullptr;
-	if (decoder.hasPalette())
-		converted = decoder.getSurface()->convertTo(g_system->getScreenFormat(), decoder.getPalette().data(), decoder.getPalette().size());
-	else
-		converted = decoder.getSurface()->convertTo(g_system->getScreenFormat());
-	if (!converted)
-		return false;
-
-	surface.create(converted->w, converted->h, g_system->getScreenFormat());
-	surface.blitFrom(*converted);
-	delete converted;
-	return true;
-}
-
 void CryOmni3DEngine_Egypt::drawSimpleScreen(const Common::String &title, const Common::Array<Common::String> &lines,
                                              int selectedLine, const Graphics::ManagedSurface *background) const {
-	Graphics::ManagedSurface surface(640, 480, g_system->getScreenFormat());
+	Graphics::ManagedSurface surface(kScreenWidth, kScreenHeight, g_system->getScreenFormat());
 	if (background)
 		surface.blitFrom(*background);
 	else
@@ -380,7 +294,7 @@ void CryOmni3DEngine_Egypt::drawMenuScreen(Graphics::ManagedSurface &surface, in
 	for (int i = kEgyptMenuDebugLevel1; i < kEgyptMenuCount; ++i, dy += 25) {
 		const int level = i - kEgyptMenuDebugLevel1 + 1;
 		const uint32 color = (i == hoveredEntry) ? hoverColor : textColor;
-		Common::String line = Common::String::format("[F%d] L%d -> %s", level, level, kDebugLevelScenes[i - kEgyptMenuDebugLevel1]);
+		Common::String line = Common::String::format("[F%d] L%d -> %s", level, level, kLevelStartScenes[i - kEgyptMenuDebugLevel1]);
 		if (bodyFont)
 			bodyFont->drawString(&surface, line, 422, dy, 204, color);
 	}
@@ -389,20 +303,17 @@ void CryOmni3DEngine_Egypt::drawMenuScreen(Graphics::ManagedSurface &surface, in
 void CryOmni3DEngine_Egypt::playStartupLogoIfPresent() {
 	// EXE 0x4075fe: hardcoded startup sequence "logo" then "r1".
 	// R1.HNS is HNM6 640x480 with embedded CRYO_APC audio in AA chunk (22050 Hz stereo).
-	// Path resolution: HNM/<name>.HNS → HNM/FR/<name>.HNS.
+	// Path resolution: HNM/<name>.HNS -> HNM/FR/<name>.HNS.
 	static const char *const kStartupEntries[] = { "logo", "r1" };
 	for (uint i = 0; i < ARRAYSIZE(kStartupEntries); ++i) {
 		if (shouldAbort())
 			break;
-		Common::Path path(Common::String::format("HNM/%s.HNS", kStartupEntries[i]));
-		if (!Common::File::exists(path)) {
-			path = Common::Path(Common::String::format("HNM/FR/%s.HNS", kStartupEntries[i]));
-			if (!Common::File::exists(path)) {
-				warning("Egypt: startup HNS '%s' not found in HNM/ or HNM/FR/", kStartupEntries[i]);
-				continue;
-			}
+		const Common::Path path = getFilePath(kFileTypeHnm, kStartupEntries[i]);
+		if (path.empty()) {
+			warning("Egypt: startup HNS '%s' not found in HNM/ or HNM/FR/", kStartupEntries[i]);
+			continue;
 		}
-		warning("Egypt: startup: playing %s", path.toString(Common::Path::kNativeSeparator).c_str());
+		debugC(kDebugFile, "Egypt: startup: playing %s", path.toString(Common::Path::kNativeSeparator).c_str());
 		playHNM(path, Audio::Mixer::kMusicSoundType);
 		clearKeys();
 		waitMouseRelease();
@@ -413,14 +324,14 @@ CryOmni3DEngine_Egypt::EgyptStartupMode CryOmni3DEngine_Egypt::showMainMenu() {
 	loadMenuLabels();
 
 	Graphics::ManagedSurface background;
-	const bool hasBackground = loadWrappedTgaSurface(Common::Path("SPRITE/ACC_FR.TGA"), background);
+	const bool hasBackground = loadTgaImage(getFilePath(kFileTypeSpriteImage, "ACC_FR.TGA"), background, true);
 	if (hasBackground) {
-		warning("EGYPT_MENU: asset=SPRITE/ACC_FR.TGA type=CPx5_wrapped_tga status=likely");
+		debugC(kDebugFile, "EGYPT_MENU: asset=SPRITE/ACC_FR.TGA type=CPx5_wrapped_tga status=likely");
 	} else {
-		warning("EGYPT_MENU: asset=temporary_text_menu reason=real menu asset not identified yet");
+		debugC(kDebugFile, "EGYPT_MENU: asset=temporary_text_menu reason=real menu asset not identified yet");
 	}
 
-	Graphics::ManagedSurface surface(640, 480, g_system->getScreenFormat());
+	Graphics::ManagedSurface surface(kScreenWidth, kScreenHeight, g_system->getScreenFormat());
 	if (hasBackground)
 		surface.blitFrom(background);
 	else
@@ -589,15 +500,15 @@ Common::String CryOmni3DEngine_Egypt::startStoryModePrototype() {
 	_gameVariables[GameVariables::kMain] = 0;
 	_gameVariables[GameVariables::kLevel] = 1;
 
-	// EXE 0x4076fa/0x407704: angles hardcodés avant la boucle menu.
-	// NUIT hérite de ces angles sans appliquer de centrage.
+	// EXE 0x4076fa/0x407704: hardcoded angles before the menu loop.
+	// NUIT inherits these angles without applying centering.
 	setRuntimeViewAngles(1.570000052, 0.425999999, true);
 
 	Common::String entryScene = "NUIT";
 	if (kEgyptStartupDebugStoryEntryEnabled)
 		entryScene = kEgyptStartupDebugStoryEntryScene;
 
-	warning("EGYPT_MENU: selection=Story entryScene=%s FlagVisite=0 Level=1", entryScene.c_str());
+	debugC(kDebugVariable, "EGYPT_MENU: selection=Story entryScene=%s FlagVisite=0 Level=1", entryScene.c_str());
 	return entryScene;
 }
 
@@ -610,7 +521,7 @@ Common::String CryOmni3DEngine_Egypt::startDebugLevel(int level, const Common::S
 	_gameVariables[GameVariables::kFlagVisite] = 0;
 	_gameVariables[GameVariables::kMain] = 0;
 	_gameVariables[GameVariables::kLevel] = level;
-	warning("EGYPT_MENU: selection=DebugLevel%d entryScene=%s", level, scene.c_str());
+	debugC(kDebugVariable, "EGYPT_MENU: selection=DebugLevel%d entryScene=%s", level, scene.c_str());
 	return scene;
 }
 
@@ -621,11 +532,11 @@ Common::String CryOmni3DEngine_Egypt::startVisitMode() {
 	_gameVariables[GameVariables::kMain] = 0;
 	_gameVariables[GameVariables::kLevel] = 0;
 
-	// Même angles hardcodés que le mode histoire (EXE 0x4076fa/0x407704).
-	// JOUR hérite de ces angles sans appliquer de centrage.
+	// Same hardcoded angles as story mode (EXE 0x4076fa/0x407704).
+	// JOUR inherits these angles without applying centering.
 	setRuntimeViewAngles(1.570000052, 0.425999999, true);
 
-	warning("EGYPT_MENU: selection=Visit entryScene=JOUR FlagVisite=1 Level=0");
+	debugC(kDebugVariable, "EGYPT_MENU: selection=Visit entryScene=JOUR FlagVisite=1 Level=0");
 	return "JOUR";
 }
 

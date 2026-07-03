@@ -19,6 +19,7 @@
  *
  */
 
+#include "common/debug.h"
 #include "common/endian.h"
 #include "common/rect.h"
 #include "common/system.h"
@@ -31,48 +32,50 @@
 
 #include "cryomni3d/egypt/cursor.h"
 #include "cryomni3d/egypt/engine.h"
+#include "cryomni3d/egypt/toolbar.h"
+#include "cryomni3d/egypt/sprite.h"
 
 namespace CryOmni3D {
 namespace Egypt {
 
 namespace {
 
-// Toolbar layout — confirmed from EXE function 0x808080 / 0x808990
+// Toolbar layout - confirmed from EXE function 0x808080 / 0x808990
 //
-// Total size: 640×48 pixels, screen Y = 432 (= 480 - 48)
-// Confirmed by: push 0x30 (=48) at 0x8089ae, offset 0x87000 (=640×432×2) at 0x8089b0
+// Total size: 640x48 pixels, screen Y = 432 (= 480 - 48)
+// Confirmed by: push 0x30 (=48) at 0x8089ae, offset 0x87000 (=640x432x2) at 0x8089b0
 //
 // Y offsets within the 48-pixel-tall toolbar strip (from EXE constants):
-//   Sprite 15 (30×30 slot): 0x1eb - param → at param=48 → screen y=443 → offset 11
-//   Sprite 16/18 (20×20):   0x1f0 - param → at param=48 → screen y=448 → offset 16
-//   Sprite 19 (20×20):      0x1fc - param → at param=48 → screen y=460 → offset 28 (=48-20, bottom-aligned)
+//   Sprite 15 (30x30 slot): 0x1eb - param -> at param=48 -> screen y=443 -> offset 11
+//   Sprite 16/18 (20x20):   0x1f0 - param -> at param=48 -> screen y=448 -> offset 16
+//   Sprite 19 (20x20):      0x1fc - param -> at param=48 -> screen y=460 -> offset 28 (=48-20, bottom-aligned)
 //     Confirmed by static draw at absolute y=0x1cc=460 (0x808786) and hit-test (0x8087c4)
 //
 // X positions (EXE):
 //   Sprite 19 (options):       x=0        (EXE 0x808f03: push edi=0)
 //   Sprite 16 (view-item):     x=128=0x80 (EXE 0x808a4f: push 0x80)
-//   Sprite 15 (inv slot ×10):  x=160+i*46 (EXE 0x808cdc: mov ebx,0xa0; 0x808edc: add ebx,0x2e)
+//   Sprite 15 (inv slot x10):  x=160+i*46 (EXE 0x808cdc: mov ebx,0xa0; 0x808edc: add ebx,0x2e)
 //   Sprite 18 (doc button):    x=617=0x269(EXE 0x808a6e: push 0x269)
 //
-// Animation: 12 frames, step=4px (param: 4→48), 10ms/frame
+// Animation: 12 frames, step=4px (param: 4->48), 10ms/frame
 //   Counter at ds:0x47c5f8; initial=4 (0x8088bc); stop at 0x30=48 (0x808941)
 //
 // Navigation shortcuts (EXE 0x80b980 state machine):
-//   Zone 0x70-0x75 = Windows VK_F1-VK_F6 → scenes S00,D01,A02,N01A,M01,K43
-//   Zone 0x76     = Windows VK_F7         → dismiss
+//   Zone 0x70-0x75 = Windows VK_F1-VK_F6 -> scenes S00,D01,A02,N01A,M01,K43
+//   Zone 0x76     = Windows VK_F7         -> dismiss
 
-static const int kSpriteSlot       = 15;  // 30×30 — empty inventory slot
-static const int kSpriteLeft       = 16;  // 20×20 — view-item / eye button (inactive)
-static const int kSpriteLeftActive = 17;  // 20×20 — eye button (active: main has eye action)
-static const int kSpriteRight      = 18;  // 20×20 — documentation button
-static const int kSpriteOptions    = 19;  // 20×20 — options / dismiss (bottom-aligned)
+static const int kSpriteSlot       = 15;  // 30x30 - empty inventory slot
+static const int kSpriteLeft       = 16;  // 20x20 - view-item / eye button (inactive)
+static const int kSpriteLeftActive = 17;  // 20x20 - eye button (active: main has eye action)
+static const int kSpriteRight      = 18;  // 20x20 - documentation button
+static const int kSpriteOptions    = 19;  // 20x20 - options / dismiss (bottom-aligned)
 
 // Object icon sprite base: objectId + kItemIconBase (EXE: objectId + 0x92)
 static const int kItemIconBase = 0x92;   // = 146
 
-// Eye action table (EXE 0x435774) — maps objectId to a packed action word.
-// Bit 15 set → warp: bits 14..0 = index into kEyeWarpTargets[].
-// Bit 15 clear → documentation ID passed to displayDocumentationById().
+// Eye action table (EXE 0x435774) - maps objectId to a packed action word.
+// Bit 15 set -> warp: bits 14..0 = index into kEyeWarpTargets[].
+// Bit 15 clear -> documentation ID opened in the documentation viewer.
 struct EgyptEyeEntry { int objectId; uint32 action; };
 
 static const char *const kEyeWarpTargets[] = {
@@ -119,13 +122,6 @@ static const int kSlotCount  = 10;  // number of slots (loop 0x4c35f8..0x4c3620 
 static const int kXOptions   = 0;   // sprite 19 x
 static const int kXLeft      = 128; // sprite 16 x (EXE: push 0x80)
 static const int kXRight     = 617; // sprite 18 x (EXE: push 0x269)
-
-// F1-F6 → scene navigation (zones 0x70-0x75 = Windows VK_F1-VK_F6)
-// In visit mode, slots 0-5 are labelled with these site names (EXE 0x808683 text label path)
-static const char *const kScenes[6] = { "S00", "D01", "A02", "N01A", "M01", "K43" };
-
-// INTERFAC.SPR sprites are RGB565
-static const Graphics::PixelFormat kEgyptSpriteFormat(2, 5, 6, 5, 0, 11, 5, 0, 0);
 
 // Blit one toolbar sprite (RGB565, masked) onto a 32bpp destination surface
 static void blitEgyptSprite(const EgyptInterfaceSprite &sprite, Graphics::ManagedSurface &dst,
@@ -181,14 +177,14 @@ void CryOmni3DEngine_Egypt::makeTranslucent(Graphics::Surface &dst,
 
 // ----------------------------------------------------------------------------
 
-bool CryOmni3DEngine_Egypt::displayToolbar(const Graphics::Surface *original) {
-	if (_interfaceSprites.size() <= (uint)kSpriteOptions)
+bool Egypt_Toolbar::display(const Graphics::Surface *original) {
+	if (_engine->_spriteLoader.interfaceSpriteCount() <= (uint)kSpriteOptions)
 		return false;
 
-	// EXE 0x808683: FlagVisite controls text label rendering (!=0 → labels shown in visit mode).
-	// EXE 0x808529: FlagVisite!=0 → kEgyptCursorVisit when hovering a named slot.
+	// EXE 0x808683: FlagVisite controls text label rendering (!=0 -> labels shown in visit mode).
+	// EXE 0x808529: FlagVisite!=0 -> kEgyptCursorVisit when hovering a named slot.
 	// The sprite layout (0x8089d0) is the same in both modes; only content/cursor/labels differ.
-	const bool inVisitMode = (getScriptVariableValue("FlagVisite") != 0);
+	const bool inVisitMode = (_engine->getScriptVariableValue("FlagVisite") != 0);
 
 	// Working surfaces: 640 wide, kToolbarH (48) tall
 	Graphics::ManagedSurface bgSurface(640, kToolbarH, g_system->getScreenFormat());
@@ -198,17 +194,17 @@ bool CryOmni3DEngine_Egypt::displayToolbar(const Graphics::Surface *original) {
 	if (original && original->w >= 640 && original->h >= 480) {
 		const Common::Rect srcRect(0, original->h - kToolbarH, 640, original->h);
 		bgSurface.copyRectToSurface(*original, 0, 0, srcRect);
-		makeTranslucent(*bgSurface.surfacePtr(), bgSurface.rawSurface());
+		_engine->makeTranslucent(*bgSurface.surfacePtr(), bgSurface.rawSurface());
 	}
 
 	// Toolbar top: y=432 on a 480-pixel screen (= 480 - 48)
-	const int screenY = 480 - kToolbarH;
+	const int screenY = kScreenHeight - kToolbarH;
 
-	// Hit rects in screen coordinates — confirmed from EXE hit-tests (0x819f60 calls)
-	// Sprite 19: EXE 0x8087c4 push 0x14,0x14,edi(0),0x1cc(460) → 20×20 at (0,460)
-	// Sprite 16: EXE 0x808aab push 0x14,0x14,0x80(128),ebp     → 20×20 at (128, screenY+kYButtons)
-	// Sprite 18: EXE 0x809131 push 0x14,0x14,0x269(617),ebp    → 20×20 at (617, screenY+kYButtons)
-	// Slots:     EXE 0x808e80 push 0x1e(30),0x1e(30),x,y       → 30×30 per slot
+	// Hit rects in screen coordinates - confirmed from EXE hit-tests (0x819f60 calls)
+	// Sprite 19: EXE 0x8087c4 push 0x14,0x14,edi(0),0x1cc(460) -> 20x20 at (0,460)
+	// Sprite 16: EXE 0x808aab push 0x14,0x14,0x80(128),ebp     -> 20x20 at (128, screenY+kYButtons)
+	// Sprite 18: EXE 0x809131 push 0x14,0x14,0x269(617),ebp    -> 20x20 at (617, screenY+kYButtons)
+	// Slots:     EXE 0x808e80 push 0x1e(30),0x1e(30),x,y       -> 30x30 per slot
 	const Common::Rect kRectOptions(kXOptions,                   screenY + kYOptions,
 	                                kXOptions + 20,              screenY + kYOptions + 20);
 	const Common::Rect kRectLeft(   kXLeft,                      screenY + kYButtons,
@@ -219,9 +215,9 @@ bool CryOmni3DEngine_Egypt::displayToolbar(const Graphics::Surface *original) {
 	// Helper: blit one interface sprite at a given x, y-offset within the toolbar strip.
 	// `position` = number of toolbar rows still hidden (0 = fully visible, kToolbarH = fully hidden).
 	auto blitSpr = [&](int sprId, int x, int yOff, int position) {
-		if (sprId < 0 || (uint)sprId >= _interfaceSprites.size())
+		if (sprId < 0 || (uint)sprId >= _engine->_spriteLoader.interfaceSpriteCount())
 			return;
-		const EgyptInterfaceSprite &spr = *_interfaceSprites[sprId];
+		const EgyptInterfaceSprite &spr = _engine->_spriteLoader.interfaceSprite(sprId);
 		blitEgyptSprite(spr, dest, x, position + yOff);
 	};
 
@@ -245,7 +241,7 @@ bool CryOmni3DEngine_Egypt::displayToolbar(const Graphics::Surface *original) {
 
 			// Eye button: active (17) in story mode when main object has an eye action.
 			if (!inVisitMode) {
-				const int mainId = getScriptVariableValue("main");
+				const int mainId = _engine->getScriptVariableValue("main");
 				const uint32 eyeAct = (mainId != 0) ? lookupEyeAction(mainId) : 0u;
 				blitSpr(eyeAct != 0 ? kSpriteLeftActive : kSpriteLeft, kXLeft, kYButtons, position);
 			} else {
@@ -256,11 +252,11 @@ bool CryOmni3DEngine_Egypt::displayToolbar(const Graphics::Surface *original) {
 			for (int i = 0; i < kSlotCount; i++) {
 				blitSpr(kSpriteSlot, kSlotX0 + i * kSlotStep, kYSlot, position);
 				if (!inVisitMode) {
-					const int slotId = getScriptVariableValue(
+					const int slotId = _engine->getScriptVariableValue(
 					    Common::String::format("inventaire%d", i));
 					if (slotId > 0) {
 						const int iconSpr = slotId + kItemIconBase;
-						if ((uint)iconSpr < _interfaceSprites.size())
+						if ((uint)iconSpr < _engine->_spriteLoader.interfaceSpriteCount())
 							blitSpr(iconSpr, kSlotX0 + i * kSlotStep, kYSlot, position);
 					}
 				}
@@ -274,7 +270,7 @@ bool CryOmni3DEngine_Egypt::displayToolbar(const Graphics::Surface *original) {
 				const Graphics::Font *font =
 				    FontMan.getFontByUsage(Graphics::FontManager::kGUIFont);
 				if (font) {
-					const Common::String label(kScenes[hoveredSlot]);
+					const Common::String label(kLevelStartScenes[hoveredSlot]);
 					const int textW = font->getStringWidth(label);
 					const int fontH = font->getFontHeight();
 					// Centre above the slot; clamp to toolbar bounds
@@ -296,48 +292,48 @@ bool CryOmni3DEngine_Egypt::displayToolbar(const Graphics::Surface *original) {
 		g_system->updateScreen();
 	};
 
-	showMouse(true);
-	setInterfaceCursor(kEgyptCursorDefault);
+	_engine->showMouse(true);
+	_engine->setInterfaceCursor(kEgyptCursorDefault);
 
-	// --- Slide in (position kToolbarH → 0), step=4, 10ms/frame ---
+	// --- Slide in (position kToolbarH -> 0), step=4, 10ms/frame ---
 	for (int pos = kToolbarH; pos >= 0; pos -= 4) {
 		drawFrame(pos);
 		g_system->delayMillis(10);
-		pollEvents();
-		if (shouldAbort())
+		_engine->pollEvents();
+		if (_engine->shouldAbort())
 			return false;
 	}
 	drawFrame(0);
 
-	clearKeys();
-	waitMouseRelease();
+	_engine->clearKeys();
+	_engine->waitMouseRelease();
 
 	// --- Event loop ---
 	int  selectedScene   = -1;
 	int  lastHoveredSlot = -2; // sentinel to force cursor initialisation
 	bool eyeWarpQueued   = false;
 
-	while (!shouldAbort() && selectedScene < 0 && !eyeWarpQueued) {
-		pollEvents();
+	while (!_engine->shouldAbort() && selectedScene < 0 && !eyeWarpQueued) {
+		_engine->pollEvents();
 
-		if (getCurrentMouseButton() == 2) {
-			waitMouseRelease();
+		if (_engine->getCurrentMouseButton() == 2) {
+			_engine->waitMouseRelease();
 			break;
 		}
 
 		// Key handling.
 		// EXE 0x80b980: F1-F6 navigation active in both story and visit modes
-		// (gated only by mode flags and ds:0x4d99d0==0x70 — no FlagVisite check).
+		// (gated only by mode flags and ds:0x4d99d0==0x70 - no FlagVisite check).
 		Common::KeyCode kc;
-		while ((kc = getNextKey().keycode) != Common::KEYCODE_INVALID) {
+		while ((kc = _engine->getNextKey().keycode) != Common::KEYCODE_INVALID) {
 			if (kc == Common::KEYCODE_SPACE) {
-				clearKeys();
+				_engine->clearKeys();
 				goto dismissToolbar;
 			}
 			for (int i = 0; i < 6; i++) {
 				if (kc == (Common::KeyCode)(Common::KEYCODE_F1 + i)) {
 					selectedScene = i;
-					clearKeys();
+					_engine->clearKeys();
 					break;
 				}
 			}
@@ -348,8 +344,8 @@ bool CryOmni3DEngine_Egypt::displayToolbar(const Graphics::Surface *original) {
 			break;
 
 		// Left-click hit testing (on release, matching EXE behaviour).
-		if (getDragStatus() == kDragStatus_Finished) {
-			const Common::Point mouse = getMousePos();
+		if (_engine->getDragStatus() == kDragStatus_Finished) {
+			const Common::Point mouse = _engine->getMousePos();
 
 			if (kRectOptions.contains(mouse)) {
 				goto dismissToolbar;
@@ -358,27 +354,27 @@ bool CryOmni3DEngine_Egypt::displayToolbar(const Graphics::Surface *original) {
 			if (kRectLeft.contains(mouse)) {
 				// Eye / view-item button.
 				if (!inVisitMode) {
-					const int mainId = getScriptVariableValue("main");
+					const int mainId = _engine->getScriptVariableValue("main");
 					if (mainId != 0) {
 						const uint32 eyeAct = lookupEyeAction(mainId);
 						if (eyeAct & 0x8000) {
 							const uint warpIdx = eyeAct & 0x7fff;
 							if (warpIdx < ARRAYSIZE(kEyeWarpTargets)) {
-								_pendingReturnScene = _currentScene.name;
-								_pendingWarpTarget  = kEyeWarpTargets[warpIdx];
+								_engine->_pendingReturnScene = _engine->_currentScene.name;
+								_engine->_pendingWarpTarget  = kEyeWarpTargets[warpIdx];
 								eyeWarpQueued = true;
 								goto dismissToolbar;
 							}
 						} else if (eyeAct != 0) {
-							displayDocumentationById((int)eyeAct);
+							_engine->_documentation.displayRecord((int)eyeAct);
 						}
 					}
 				}
 				goto dismissToolbar;
 			}
 			if (kRectRight.contains(mouse)) {
-				// Documentation button — not yet implemented.
-				warning("EGYPT_TOOLBAR: documentary space button clicked — not implemented yet");
+				// Documentation button - not yet implemented.
+				warning("EGYPT_TOOLBAR: documentary space button clicked - not implemented yet");
 				goto dismissToolbar;
 			}
 
@@ -387,43 +383,43 @@ bool CryOmni3DEngine_Egypt::displayToolbar(const Graphics::Surface *original) {
 				                            kSlotX0 + i * kSlotStep + 30, screenY + kYSlot + 30);
 				if (slotRect.contains(mouse)) {
 					if (inVisitMode && i < 6) {
-						// Visit mode: slot click = F-key equivalent → navigate to site
+						// Visit mode: slot click = F-key equivalent -> navigate to site
 						selectedScene = i;
 					} else if (!inVisitMode) {
-						// Story mode: swap main ↔ slot (EXE 0x4089d0).
+						// Story mode: swap main <-> slot (EXE 0x4089d0).
 						const Common::String slotKey = Common::String::format("inventaire%d", i);
-						int held = getScriptVariableValue("main");
-						int slotVal = getScriptVariableValue(slotKey);
+						int held = _engine->getScriptVariableValue("main");
+						int slotVal = _engine->getScriptVariableValue(slotKey);
 
 						if (held == 0) {
 							if (slotVal != 0) {
-								_gameVariables[GameVariables::kMain] = slotVal;
-								setGameVar(slotKey, 0);
+								_engine->_gameVariables[GameVariables::kMain] = slotVal;
+								_engine->setGameVar(slotKey, 0);
 							}
 						} else if (slotVal == 0) {
-							setGameVar(slotKey, held);
-							_gameVariables[GameVariables::kMain] = 0;
+							_engine->setGameVar(slotKey, held);
+							_engine->_gameVariables[GameVariables::kMain] = 0;
 						} else {
 							// Both non-zero: check Etoupe-on-Lampe special case.
-							const int etoupe = getScriptVariableValue("ObjetEtoupe");
-							const int lampe  = getScriptVariableValue("ObjetLampe");
+							const int etoupe = _engine->getScriptVariableValue("ObjetEtoupe");
+							const int lampe  = _engine->getScriptVariableValue("ObjetLampe");
 							if (etoupe > 0 && lampe > 0 &&
 							    held == etoupe && slotVal == lampe &&
-							    getScriptVariableValue("Etoupe_Sur_Lampe") == 0) {
-								_gameVariables[GameVariables::kEtoupe_Sur_Lampe] = 1;
-								warning("Egypt: Etoupe_Sur_Lampe activated");
+							    _engine->getScriptVariableValue("Etoupe_Sur_Lampe") == 0) {
+								_engine->_gameVariables[GameVariables::kEtoupe_Sur_Lampe] = 1;
+								debugC(kDebugVariable, "Egypt: Etoupe_Sur_Lampe activated");
 							} else {
-								_gameVariables[GameVariables::kMain] = slotVal;
-								setGameVar(slotKey, held);
+								_engine->_gameVariables[GameVariables::kMain] = slotVal;
+								_engine->setGameVar(slotKey, held);
 							}
 						}
 
 						// Update cursor to reflect new held object.
-						const int newMain = getScriptVariableValue("main");
+						const int newMain = _engine->getScriptVariableValue("main");
 						if (newMain != 0)
-							setInterfaceCursor(getCursorFrameForHeldObject(newMain, false));
+							_engine->setInterfaceCursor(_engine->getCursorFrameForHeldObject(newMain, false));
 						else
-							setInterfaceCursor(kEgyptCursorDefault);
+							_engine->setInterfaceCursor(kEgyptCursorDefault);
 					}
 					break;
 				}
@@ -432,7 +428,7 @@ bool CryOmni3DEngine_Egypt::displayToolbar(const Graphics::Surface *original) {
 
 		// --- Update hovered slot and cursor ---
 		{
-			const Common::Point mouse = getMousePos();
+			const Common::Point mouse = _engine->getMousePos();
 			int newHoveredSlot = -1;
 			if (mouse.y >= screenY) {
 				for (int i = 0; i < kSlotCount; i++) {
@@ -448,13 +444,13 @@ bool CryOmni3DEngine_Egypt::displayToolbar(const Graphics::Surface *original) {
 				lastHoveredSlot = newHoveredSlot;
 				hoveredSlot     = newHoveredSlot;
 				if (inVisitMode && newHoveredSlot >= 0 && newHoveredSlot < 6) {
-					setInterfaceCursor(kEgyptCursorVisit);
+					_engine->setInterfaceCursor(kEgyptCursorVisit);
 				} else {
-					const int mainId = !inVisitMode ? getScriptVariableValue("main") : 0;
+					const int mainId = !inVisitMode ? _engine->getScriptVariableValue("main") : 0;
 					if (mainId != 0)
-						setInterfaceCursor(getCursorFrameForHeldObject(mainId, false));
+						_engine->setInterfaceCursor(_engine->getCursorFrameForHeldObject(mainId, false));
 					else
-						setInterfaceCursor(kEgyptCursorDefault);
+						_engine->setInterfaceCursor(kEgyptCursorDefault);
 				}
 			}
 		}
@@ -465,25 +461,30 @@ bool CryOmni3DEngine_Egypt::displayToolbar(const Graphics::Surface *original) {
 
 dismissToolbar:
 
-	if (shouldAbort())
+	if (_engine->shouldAbort())
 		return false;
 
-	// --- Slide out (position 0 → kToolbarH), step=4 ---
+	// --- Slide out (position 0 -> kToolbarH), step=4 ---
 	for (int pos = 4; pos <= kToolbarH; pos += 4) {
 		drawFrame(pos);
 		g_system->delayMillis(10);
-		pollEvents();
-		if (shouldAbort())
+		_engine->pollEvents();
+		if (_engine->shouldAbort())
 			return false;
 	}
 
 	if (eyeWarpQueued)
 		return true;
 	if (selectedScene >= 0 && selectedScene < 6) {
-		_pendingWarpTarget = kScenes[selectedScene];
+		_engine->_pendingWarpTarget = kLevelStartScenes[selectedScene];
 		return true;
 	}
 	return false;
+}
+
+
+bool CryOmni3DEngine_Egypt::displayToolbar(const Graphics::Surface *original) {
+	return _toolbar.display(original);
 }
 
 } // End of namespace Egypt

@@ -19,6 +19,7 @@
  *
  */
 
+#include "common/debug.h"
 #include "common/endian.h"
 #include "common/file.h"
 #include "common/textconsole.h"
@@ -66,7 +67,7 @@ void CryOmni3DEngine_Egypt::parseSceneDefinition(const Common::Path &filename, c
 
 		if (sscanf(line.c_str(), "Zone-%u %u-%u-%u-%u %u:%511[^\r\n]",
 		           &zoneId, &rawTop, &rawLeft, &rawHeight, &rawWidth, &actionId, commandBuffer) == 7) {
-			// Check for duplicate zone id (same id, different rect — e.g. Zone-001 in S00.DEF)
+			// Check for duplicate zone id (same id, different rect - e.g. Zone-001 in S00.DEF)
 			EgyptZone *existing = nullptr;
 			for (uint zi = 0; zi < _currentScene.zones.size(); ++zi) {
 				if (_currentScene.zones[zi].id == zoneId) {
@@ -82,7 +83,7 @@ void CryOmni3DEngine_Egypt::parseSceneDefinition(const Common::Path &filename, c
 				extra.right  = rawLeft + rawWidth;
 				extra.bottom = rawTop + rawHeight;
 				existing->extraRects.push_back(extra);
-				warning("Egypt: zone %03u extra rect #%u=(%u,%u %ux%u)",
+				debugC(kDebugFile, "Egypt: zone %03u extra rect #%u=(%u,%u %ux%u)",
 				        zoneId, (uint)(existing->extraRects.size() + 1),
 				        rawLeft, rawTop, rawWidth, rawHeight);
 			} else {
@@ -98,7 +99,7 @@ void CryOmni3DEngine_Egypt::parseSceneDefinition(const Common::Path &filename, c
 				parseZoneCommand(zone);
 				_currentScene.zones.push_back(zone);
 
-				warning("Egypt: zone %03u rect=(%u,%u %ux%u) action=%u command=%s param=%s label=%s target=%s",
+				debugC(kDebugFile, "Egypt: zone %03u rect=(%u,%u %ux%u) action=%u command=%s param=%s label=%s target=%s",
 				        zone.id, zone.left, zone.top, rawWidth, rawHeight,
 				        zone.actionId, zone.command.c_str(), zone.param.c_str(),
 				        zone.label.c_str(), zone.targetWarp.c_str());
@@ -165,17 +166,17 @@ void CryOmni3DEngine_Egypt::parseSceneDefinition(const Common::Path &filename, c
 				if (!parsed) {
 					warning("Egypt: unsupported centrage form in %s: %s",
 					        sceneName.c_str(), line.c_str());
-					logScriptLine(line);
+					_script.logScriptLine(line);
 					continue;
 				}
 
 				_currentCentrages.push_back(centrage);
-				warning("Egypt: centrage %s%c%0.3f%s",
+				debugC(kDebugFile, "Egypt: centrage %s%c%0.3f%s",
 				        centrage.name.c_str(), centrage.op, centrage.alpha,
 				        centrage.hasBeta ? Common::String::format(" beta=%0.3f", centrage.beta).c_str() : "");
 			}
 		}
-		logScriptLine(line);
+		_script.logScriptLine(line);
 	}
 
 }

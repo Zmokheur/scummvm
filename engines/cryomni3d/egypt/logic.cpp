@@ -19,6 +19,7 @@
  *
  */
 
+#include "common/debug.h"
 #include "common/file.h"
 #include "common/system.h"
 #include "common/textconsole.h"
@@ -30,7 +31,7 @@
 namespace CryOmni3D {
 namespace Egypt {
 
-// ── Asset detection ───────────────────────────────────────────────────────────
+// --- Asset detection ---
 
 namespace {
 
@@ -84,7 +85,7 @@ Common::Array<EgyptSceneAsset> CryOmni3DEngine_Egypt::detectSceneAssets(
 				                                                   startLevel, filename.c_str()));
 		}
 
-		warning("Egypt: asset %s %s → %s",
+		debugC(kDebugFile, "Egypt: asset %s %s -> %s",
 		        filename.c_str(), asset.present ? "found" : "absent",
 		        asset.path.toString(Common::Path::kNativeSeparator).c_str());
 		result.push_back(asset);
@@ -93,7 +94,7 @@ Common::Array<EgyptSceneAsset> CryOmni3DEngine_Egypt::detectSceneAssets(
 	return result;
 }
 
-// ── Script block extraction ───────────────────────────────────────────────────
+// --- Script block extraction ---
 
 // Returns lines strictly between fromMarker and toMarker.
 // A marker is recognised only when it sits at column 0 (no leading whitespace),
@@ -128,7 +129,7 @@ Common::Array<Common::String> CryOmni3DEngine_Egypt::extractScriptBlock(
 	return result;
 }
 
-// ── Two-phase script execution ────────────────────────────────────────────────
+// --- Two-phase script execution ---
 
 // warpinit phase: run once when entering the scene.
 // Sets up sprite catalog (editspr), starts music, initialises variables.
@@ -139,7 +140,7 @@ void CryOmni3DEngine_Egypt::runWarpInit() {
 	}
 	_gameVariables[GameVariables::kZoneclic] = 0;
 	Common::Array<Common::String> block = extractScriptBlock("warpinit", "endinit");
-	executeScriptBlock(block, 0, 0.0, 0.0);
+	_script.executeBlock(block, 0, 0.0, 0.0);
 }
 
 // endinit phase: run on each player interaction (and once with zoneclic=0 on scene load).
@@ -147,7 +148,7 @@ void CryOmni3DEngine_Egypt::runWarpInit() {
 void CryOmni3DEngine_Egypt::runEndInit(int zoneclic) {
 	// Reset to the baseline zones that are always active (e.g. UTILISER_SUR zones
 	// added by autoActivateZoneclicZones).  On the first call from runSceneStartup
-	// _autoActivationZones is still empty, so this is a no-op clear — same as
+	// _autoActivationZones is still empty, so this is a no-op clear - same as
 	// before.  On subsequent calls (timer ticks, dialogue refresh) this mirrors
 	// the EXE's per-frame model: script-managed zones are re-evaluated from scratch.
 	_currentScene.activeZones = _autoActivationZones;
@@ -161,10 +162,10 @@ void CryOmni3DEngine_Egypt::runEndInit(int zoneclic) {
 	bool available = false;
 	getRuntimeSourceViewAngles(alpha, beta, available);
 	Common::Array<Common::String> block = extractScriptBlock("endinit", "endwarp");
-	executeScriptBlock(block, (uint)zoneclic, alpha, beta);
+	_script.executeBlock(block, (uint)zoneclic, alpha, beta);
 }
 
-// ── Zone auto-activation ──────────────────────────────────────────────────────
+// --- Zone auto-activation ---
 
 // Safety-net: activate any zone whose id is directly compared against
 // 'zoneclic' in the script but was not activated by the initial runEndInit(0) pass.
@@ -172,7 +173,7 @@ void CryOmni3DEngine_Egypt::runEndInit(int zoneclic) {
 // those calls may be in conditional branches that don't execute at startup
 // (e.g. S09 Zone 1 is activated in Suite1 only when FlagPlancheUse!=0, but
 // also referenced by "if zoneclic!=1" in Suite2 for the pit-fall path).
-// The alreadyActive guard is sufficient — if runEndInit(0) already activated
+// The alreadyActive guard is sufficient - if runEndInit(0) already activated
 // the zone, we don't add it again.
 void CryOmni3DEngine_Egypt::autoActivateZoneclicZones() {
 	const char *needle    = "zoneclic";
@@ -215,29 +216,29 @@ void CryOmni3DEngine_Egypt::autoActivateZoneclicZones() {
 			if (!alreadyActive) {
 				_currentScene.activeZones.push_back((uint)zoneId);
 				_autoActivationZones.push_back((uint)zoneId);
-				warning("Egypt: auto-activating zone %u in %s (referenced by zoneclic comparison)",
+				debugC(kDebugVariable, "Egypt: auto-activating zone %u in %s (referenced by zoneclic comparison)",
 				        (uint)zoneId, _currentScene.name.c_str());
 			}
 		}
 	}
 }
 
-// ── Scene startup orchestration ───────────────────────────────────────────────
+// --- Scene startup orchestration ---
 
 // Called from loadScene() after parseSceneDefinition() and prepareRuntimeArrivalView().
 // Runs the two DEF phases, applies fallback activation, and logs the result.
 void CryOmni3DEngine_Egypt::runSceneStartup() {
 	_currentScene.activeZones.clear();
 
-	// Clear avant les deux phases : warpinit et endinit peuvent poser un label.
-	_dialoguePendingLabel.clear();
+	// Clear before both phases: warpinit and endinit can each set a label.
+	_dialogPendingLabel.clear();
 	runWarpInit();
 	runEndInit(0);
 
-	// Capturer le label posé par l'une ou l'autre phase (warpinit a la priorité
-	// si les deux en posent un, car endinit l'écrase ; on prend le dernier).
-	Common::String startupDlgLabel = _dialoguePendingLabel;
-	_dialoguePendingLabel.clear();
+	// Capture the label set by either phase (warpinit has priority
+	// if both set one, since endinit overwrites it; we take the last one).
+	Common::String startupDlgLabel = _dialogPendingLabel;
+	_dialogPendingLabel.clear();
 
 	// Fallback: if no zone was activated by the script, enable all non-zero-rect zones.
 	// This fires when holding an object blocks every zoneactive call (EXE 0x412a16).
@@ -262,12 +263,12 @@ void CryOmni3DEngine_Egypt::runSceneStartup() {
 		if (!activeList.empty()) activeList += ",";
 		activeList += Common::String::format("%u", _currentScene.activeZones[i]);
 	}
-	warning("Egypt: initial active zones for %s = [%s]",
+	debugC(kDebugVariable, "Egypt: initial active zones for %s = [%s]",
 	        _currentScene.name.c_str(), activeList.c_str());
 
-	// Dialogue demandé par le script de démarrage (ex : SuiteInit → dialoguer N).
+	// Dialogue requested by the startup script (e.g. SuiteInit -> dialoguer N).
 	if (!startupDlgLabel.empty()) {
-		runDialogue(startupDlgLabel);
+		_dialog.run(startupDlgLabel);
 		// The dialogue may have changed script variables (e.g. giving an item sets
 		// main, auto-incrementing the object variable).  Refresh active zones so
 		// any pickup zone that is now gated-out is removed immediately, rather
@@ -276,12 +277,12 @@ void CryOmni3DEngine_Egypt::runSceneStartup() {
 	}
 }
 
-// ── Screen fade ───────────────────────────────────────────────────────────────
+// --- Screen fade ---
 
 // Animates a fade between the current screen and black.
-// toBlack=true : fade current → black (FADE_OUT), ~350 ms.
-// toBlack=false: capture current, fill black, fade back → current (FADE_IN).
-// 18 steps × 20 ms matches the original EXE blend loop (0x417910 / 0x417d70).
+// toBlack=true : fade current -> black (FADE_OUT), ~350 ms.
+// toBlack=false: capture current, fill black, fade back -> current (FADE_IN).
+// 18 steps x 20 ms matches the original EXE blend loop (0x417910 / 0x417d70).
 void CryOmni3DEngine_Egypt::performScreenFade(bool toBlack) {
 	static const uint kSteps  = 18;
 	static const uint kStepMs = 20;
@@ -343,12 +344,12 @@ void CryOmni3DEngine_Egypt::performScreenFade(bool toBlack) {
 	if (toBlack) fillSurface(0);
 }
 
-// ── Scene crossfade ───────────────────────────────────────────────────────────
+// --- Scene crossfade ---
 
-// Blends oldScreen → newScreen over ~480 ms, matching the EXE routine at 0x418220.
+// Blends oldScreen -> newScreen over ~480 ms, matching the EXE routine at 0x418220.
 // counter += 0x10 per step; factor = min(counter, 0x100); step every 30 ms.
-// Formula per channel: out = srcA - ((srcA - srcB) * factor >> 8)  (lerp old→new).
-// 16 visible blend steps (0x10..0x100) then 3 hold steps (0x110..0x130) → ~570 ms total.
+// Formula per channel: out = srcA - ((srcA - srcB) * factor >> 8)  (lerp old->new).
+// 16 visible blend steps (0x10..0x100) then 3 hold steps (0x110..0x130) -> ~570 ms total.
 void CryOmni3DEngine_Egypt::performCrossFade(const Graphics::Surface *newScreen) {
 	static const int kStepMs  = 30;
 	static const int kStep    = 0x10;
@@ -404,7 +405,7 @@ void CryOmni3DEngine_Egypt::performCrossFade(const Graphics::Surface *newScreen)
 	_hasCrossFadeOldScreen = false;
 }
 
-// ── HNM sequence player ───────────────────────────────────────────────────────
+// --- HNM sequence player ---
 
 // Plays an ordered, slash-joined list of HNM tokens.
 // FADE_OUT / FADE_IN are internal blend effects; other tokens are resolved as
@@ -432,13 +433,10 @@ void CryOmni3DEngine_Egypt::executeHnmSequence(const Common::String &hnmJoined) 
 			continue;
 		}
 
-		Common::Path path(Common::String::format("HNM/%s.HNS", token.c_str()));
-		if (!Common::File::exists(path)) {
-			path = Common::Path(Common::String::format("HNM/FR/%s.HNS", token.c_str()));
-			if (!Common::File::exists(path)) {
-				warning("Egypt: HNM token '%s' not found in HNM/ or HNM/FR/", token.c_str());
-				continue;
-			}
+		const Common::Path path = getFilePath(kFileTypeHnm, token);
+		if (path.empty()) {
+			warning("Egypt: HNM token '%s' not found in HNM/ or HNM/FR/", token.c_str());
+			continue;
 		}
 
 		// Use HNMDecoder (audio) with the VBL speed from the file header (timing).
@@ -447,17 +445,17 @@ void CryOmni3DEngine_Egypt::executeHnmSequence(const Common::String &hnmJoined) 
 }
 
 
-// ── Script timer ──────────────────────────────────────────────────────────────
+// --- Script timer ---
 
 void CryOmni3DEngine_Egypt::resetScriptTimer() {
 	_scriptTimerStartMs = g_system->getMillis();
 	_gameVariables[GameVariables::kTimer] = 0;
-	warning("Egypt: timer reset for scene %s", _currentScene.name.c_str());
+	debugC(kDebugVariable, "Egypt: timer reset for scene %s", _currentScene.name.c_str());
 }
 
 void CryOmni3DEngine_Egypt::updateScriptTimer() {
 	const uint32 elapsed = g_system->getMillis() - _scriptTimerStartMs;
-	_gameVariables[GameVariables::kTimer] = (uint)(elapsed / 10); // centièmes de seconde
+	_gameVariables[GameVariables::kTimer] = (uint)(elapsed / 10); // hundredths of a second
 }
 
 } // End of namespace Egypt

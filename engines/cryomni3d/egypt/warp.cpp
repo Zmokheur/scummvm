@@ -19,6 +19,7 @@
  *
  */
 
+#include "common/debug.h"
 #include "common/textconsole.h"
 
 #include "cryomni3d/egypt/engine.h"
@@ -40,7 +41,7 @@ bool CryOmni3DEngine_Egypt::handleWarpClick(const Common::Point &mousePos, const
 		// is blocked until the held item is returned to the inventory.
 		const int heldObject = getScriptVariableValue("main");
 		if (heldObject != 0 && !zone->commandName.equalsIgnoreCase("UTILISER_SUR")) {
-			warning("Egypt: click blocked — holding object %d (zone=%03u command=%s)",
+			debugC(kDebugVariable, "Egypt: click blocked - holding object %d (zone=%03u command=%s)",
 			        heldObject, zone->id, zone->command.c_str());
 			return false;
 		}
@@ -48,7 +49,7 @@ bool CryOmni3DEngine_Egypt::handleWarpClick(const Common::Point &mousePos, const
 		const uint zoneClick = resolveScriptZoneClick(*zone);
 		setRuntimeViewAngles(currentAlpha, currentBeta, true);
 
-		warning("Egypt: click %s mouse=%d,%d warp=%d,%d zone=%03u zoneclic=%u command=%s",
+		debugC(kDebugVariable, "Egypt: click %s mouse=%d,%d warp=%d,%d zone=%03u zoneclic=%u command=%s",
 		        _currentScene.name.c_str(), mousePos.x, mousePos.y, warpPoint.x, warpPoint.y,
 		        zone->id, zoneClick, zone->command.c_str());
 
@@ -61,18 +62,18 @@ bool CryOmni3DEngine_Egypt::handleWarpClick(const Common::Point &mousePos, const
 			if (objectId > 0) {
 				_gameVariables[GameVariables::kMain] = objectId;
 				setInterfaceCursor(getCursorFrameForHeldObject(objectId, false));
-				warning("Egypt: PRENDRE %s → main=%d", zone->label.c_str(), objectId);
+				debugC(kDebugVariable, "Egypt: PRENDRE %s -> main=%d", zone->label.c_str(), objectId);
 			} else {
-				warning("Egypt: PRENDRE %s — constant %s not found",
+				warning("Egypt: PRENDRE %s - constant %s not found",
 				        zone->label.c_str(), objKey.c_str());
 			}
 			_pendingWarpTarget.clear();
-			_dialoguePendingLabel.clear();
+			_dialogPendingLabel.clear();
 			runEndInit(zoneClick);
-			// EXE: objectValues[objectId]++ — increment the label variable so the script's
+			// EXE: objectValues[objectId]++ - increment the label variable so the script's
 			// "if planche!=0 goto DejaPris" guard fires and zoneactive is skipped next tick.
 			setGameVar(zone->label, getScriptVariableValue(zone->label) + 1);
-			// Explicitly deactivate this zone regardless of what the script did —
+			// Explicitly deactivate this zone regardless of what the script did -
 			// the object no longer exists in the scene.
 			const uint pickedZoneId = zone->id;
 			for (uint ai = 0; ai < _currentScene.activeZones.size(); ++ai) {
@@ -83,12 +84,10 @@ bool CryOmni3DEngine_Egypt::handleWarpClick(const Common::Point &mousePos, const
 			}
 			// After the increment above, the script's animspr guard (e.g.
 			// "if planche=0 animspr 1") no longer fires.  The decoded pixels
-			// from the last tick still sit in _sceneSprPixels; force a clear
+			// from the last tick still sit in the sprite loader; force a clear
 			// so the panorama re-renders immediately without the picked-up object.
-			if (!_sceneSprPixels.empty()) {
-				_sceneSprPixels.clear();
-				_sceneSprDirty = true;
-			}
+			if (!_spriteLoader.sceneSprEmpty())
+				_spriteLoader.clearSceneSpr();
 			return !_pendingWarpTarget.empty();
 		}
 
@@ -98,29 +97,29 @@ bool CryOmni3DEngine_Egypt::handleWarpClick(const Common::Point &mousePos, const
 			const Common::String objKey = "Objet" + zone->label;
 			const int requiredId = getScriptVariableValue(objKey);
 			if (requiredId == 0 || held != requiredId) {
-				warning("Egypt: UTILISER_SUR %s — held=%d required=%d, ignoring click",
+				debugC(kDebugVariable, "Egypt: UTILISER_SUR %s - held=%d required=%d, ignoring click",
 				        zone->label.c_str(), held, requiredId);
 				return false;
 			}
-			warning("Egypt: UTILISER_SUR %s — held=%d matches, proceeding",
+			debugC(kDebugVariable, "Egypt: UTILISER_SUR %s - held=%d matches, proceeding",
 			        zone->label.c_str(), held);
 			// Fall through: the script (runEndInit) handles the result.
 		}
 
-		if (isDocumentationZone(*zone)) {
-			displayZoneDocumentation(*zone);
+		if (_documentation.isDocumentationZone(*zone)) {
+			_documentation.displayZone(*zone);
 			return false;
 		}
 
 		_pendingWarpTarget.clear();
-		_dialoguePendingLabel.clear();
+		_dialogPendingLabel.clear();
 		runEndInit(zoneClick);
 
 		// Dialogue requested by the script (via "dialoguer N" command in endinit).
-		if (!_dialoguePendingLabel.empty()) {
-			Common::String dlgLabel = _dialoguePendingLabel;
-			_dialoguePendingLabel.clear();
-			runDialogue(dlgLabel);
+		if (!_dialogPendingLabel.empty()) {
+			Common::String dlgLabel = _dialogPendingLabel;
+			_dialogPendingLabel.clear();
+			_dialog.run(dlgLabel);
 			return false;
 		}
 
@@ -137,8 +136,8 @@ bool CryOmni3DEngine_Egypt::handleWarpClick(const Common::Point &mousePos, const
 				if (label.hasSuffix("!"))
 					label.deleteLastChar();
 				label.toLowercase();
-				warning("Egypt: DIALOGUER zone %03u → label '%s'", zone->id, label.c_str());
-				runDialogue(label);
+				debugC(kDebugVariable, "Egypt: DIALOGUER zone %03u -> label '%s'", zone->id, label.c_str());
+				_dialog.run(label);
 				// Refresh zones: dialogue may have changed variables that gate
 				// pickup zones (e.g. auto-increment on main=X removes the zone).
 				runEndInit(0);
@@ -151,13 +150,13 @@ bool CryOmni3DEngine_Egypt::handleWarpClick(const Common::Point &mousePos, const
 		    !zone->targetWarp.empty()) {
 			rememberPendingArrival(*zone, zoneClick, false, true, currentAlpha, currentBeta, "active_zone_command");
 			_pendingWarpTarget = resolvePrototypeWarpTarget(zone->targetWarp);
-			warning("Egypt: active zone command from zone %03u to %s (target %s)",
+			debugC(kDebugVariable, "Egypt: active zone command from zone %03u to %s (target %s)",
 			        zone->id, _pendingWarpTarget.c_str(), zone->targetWarp.c_str());
 		}
 		return !_pendingWarpTarget.empty();
 	}
 
-	warning("Egypt: click %s mouse=%d,%d warp=%d,%d no active zone",
+	debugC(kDebugVariable, "Egypt: click %s mouse=%d,%d warp=%d,%d no active zone",
 	        _currentScene.name.c_str(), mousePos.x, mousePos.y, warpPoint.x, warpPoint.y);
 	return false;
 }
@@ -238,7 +237,7 @@ void CryOmni3DEngine_Egypt::rememberPendingArrival(const EgyptZone &zone, uint z
 	_pendingWarp.sourceOrientationAvailable = sourceOrientationAvailable;
 	_pendingWarp.sourceAlpha = alpha;
 	_pendingWarp.sourceBeta = beta;
-	warning("Egypt: remember warp fromScene=%s fromContext=%s toScene=%s toContext=%s zoneId=%u zoneclic=%u viaHnm=%d alpha=%0.3f beta=%0.3f",
+	debugC(kDebugVariable, "Egypt: remember warp fromScene=%s fromContext=%s toScene=%s toContext=%s zoneId=%u zoneclic=%u viaHnm=%d alpha=%0.3f beta=%0.3f",
 	        _pendingWarp.fromScene.c_str(), _pendingWarp.fromContext.c_str(), _pendingWarp.toScene.c_str(),
 	        _pendingWarp.toContext.c_str(), _pendingWarp.zoneId, _pendingWarp.zoneclic,
 	        _pendingWarp.viaHnm ? 1 : 0, _pendingWarp.sourceAlpha, _pendingWarp.sourceBeta);
@@ -318,7 +317,7 @@ Common::String CryOmni3DEngine_Egypt::resolvePrototypeWarpTarget(const Common::S
 
 EgyptResolvedCentrage CryOmni3DEngine_Egypt::applyCentrageRaw(const EgyptCentrage &centrage,
                                                               double sourceAlpha, double sourceBeta) const {
-	// The original EXE initialises α to π/2 before running the DEF script, then centrage rules
+	// The original EXE initialises alpha to pi/2 before running the DEF script, then centrage rules
 	// modify that default with +/- offsets or replace it with an absolute '=' value.
 	// sourceAlpha (the click angle) is intentionally ignored for + and - operations.
 	const double defaultAlpha = M_PI / 2.0;
@@ -364,7 +363,7 @@ void CryOmni3DEngine_Egypt::prepareRuntimeArrivalView() {
 	_pendingRuntimeMatchedCentrage = "none";
 	_pendingRuntimeResolved = EgyptResolvedCentrage();
 
-	// Default: the EXE always starts each panorama at α = π/2. Centrage rules then either
+	// Default: the EXE always starts each panorama at alpha = pi/2. Centrage rules then either
 	// offset from that default (+/-) or replace it with an absolute value (=).
 	const double defaultAlpha = M_PI / 2.0;
 	_pendingRuntimeResolved.matched = true;
@@ -424,7 +423,7 @@ int CryOmni3DEngine_Egypt::consumeArrivalPanoramaX(double &alpha, double &beta, 
 		alpha = _pendingRuntimeResolved.normalizedFinalAlpha;
 		beta = _pendingRuntimeResolved.finalBeta;
 	} else if (!_pendingWarp.active && _currentViewAnglesAvailable) {
-		// Entrée initiale dans NUIT/JOUR : pas de warp actif, angles hérités du menu (EXE 0x4076fa).
+		// Initial entry into NUIT/JOUR: no active warp, angles inherited from the menu (EXE 0x4076fa).
 		hasAngles = true;
 		alpha = _currentViewAlpha;
 		beta = _currentViewBeta;
@@ -437,7 +436,7 @@ void CryOmni3DEngine_Egypt::logRuntimeWarp(const Common::String &matchedCentrage
 	if (!_pendingWarp.active)
 		return;
 
-	warning("EGYPT_RUNTIME_WARP: fromScene=%s fromContext=%s toScene=%s sourceAlpha=%0.3f sourceBeta=%0.3f matchedCentrage=%s rawFinalAlpha=%0.3f normalizedFinalAlpha=%0.3f finalBeta=%0.3f appliedToRenderer=%s",
+	debugC(kDebugVariable, "EGYPT_RUNTIME_WARP: fromScene=%s fromContext=%s toScene=%s sourceAlpha=%0.3f sourceBeta=%0.3f matchedCentrage=%s rawFinalAlpha=%0.3f normalizedFinalAlpha=%0.3f finalBeta=%0.3f appliedToRenderer=%s",
 	        _pendingWarp.fromScene.c_str(), _pendingWarp.fromContext.c_str(), _pendingWarp.toScene.c_str(),
 	        _pendingWarp.sourceAlpha, _pendingWarp.sourceBeta, matchedCentrage.c_str(),
 	        resolved.rawFinalAlpha, resolved.normalizedFinalAlpha, resolved.finalBeta,
@@ -464,7 +463,7 @@ uint CryOmni3DEngine_Egypt::resolveScriptZoneClick(const EgyptZone &zone) const 
 bool CryOmni3DEngine_Egypt::shouldUseDirectWarpFallback(const EgyptZone &zone, uint zoneClick) const {
 	if (_currentScene.name.equalsIgnoreCase("S01") && zone.id == 1 &&
 	    getScriptVariableValue("FlagEntreeS01") == 0 && zoneClick == 1) {
-		warning("Egypt: keeping scripted intro path for first S01 click on zone %03u", zone.id);
+		debugC(kDebugVariable, "Egypt: keeping scripted intro path for first S01 click on zone %03u", zone.id);
 		return false;
 	}
 
