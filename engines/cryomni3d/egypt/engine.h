@@ -142,7 +142,9 @@ private:
 	void playStartupLogoIfPresent();
 	void drawSimpleScreen(const Common::String &title, const Common::Array<Common::String> &lines,
 	                      int selectedLine = -1, const Graphics::ManagedSurface *background = nullptr) const;
-	void drawMenuScreen(Graphics::ManagedSurface &surface, int hoveredEntry, bool hasBackground) const;
+	// Load/save list screen (EXE 0x80fe40); returns a 0-based slot or -1
+	int runSaveListScreen(bool saveMode, const Graphics::ManagedSurface *background);
+	Common::String getSaveDescription(int slot) const;
 	bool loadMenuLabels();
 	bool loadMessageLabels();
 	Common::String resolveMessageLabel(const Common::String &messageId) const;

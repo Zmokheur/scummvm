@@ -24,6 +24,7 @@
 
 #include "common/debug.h"
 #include "common/file.h"
+#include "common/savefile.h"
 #include "common/system.h"
 #include "common/textconsole.h"
 
@@ -38,34 +39,130 @@
 namespace CryOmni3D {
 namespace Egypt {
 
+// ----------------------------------------------------------------------------
+// Main menu - reverse-engineered from EGYPTE.EXE.
+//
+// The accueil menu lives in the state machine dispatched at 0x80ed40 on the
+// state global 0x4c2060 (states 1..6 = startup variant on a fresh session,
+// states 0x64..0x67 = in-game variant while a game is running). Background
+// is SPRITE/ACC_FR.TGA (pushed at 0x80ed6a, drawn to the back buffer and
+// copied to screen). Entries are drawn with CRYO font slot 2 (FONT03.CRF)
+// at x=248, first y=276, step 30; a bullet sprite (INTERFAC 204, 205 when
+// hovered) sits at x=224, label y+4. Hover/click rects are (224, y, 160x16)
+// tested via 0x819f20/0x819f60. Colors: white 0x4d9974, hover orange
+// 0x4d6070 = RGB(224,112,0).
+//
+// The load/save list screen is the function at 0x80fe40: header label in
+// orange at (248,236), up to 10 save rows at (248, 276+i*15), "..." scroll
+// zones at (248,256) and (248,426) (hover-dwell scrolls, 0x81a7b0 >= 10
+// ticks), "Annuler" at (248,456). Save-name records are 20 bytes in the EXE
+// (0x4c2098, stride 0x14) - same length as kSaveDescriptionLen.
+//
+// Detailed notes: devtools-egypt/menu_reverse_notes.md
+// ----------------------------------------------------------------------------
+
 namespace {
 
 const bool kEgyptStartupDebugStoryEntryEnabled = false;
 const char *const kEgyptStartupDebugStoryEntryScene = "S01";
 
-enum EgyptMenuEntry {
-	kEgyptMenuResume = 0,
-	kEgyptMenuStory = 1,
-	kEgyptMenuVisit = 2,
-	kEgyptMenuDocumentation = 3,
-	kEgyptMenuQuit = 4,
-	kEgyptMenuDebugLevel1 = 5,
-	kEgyptMenuDebugLevel2 = 6,
-	kEgyptMenuDebugLevel3 = 7,
-	kEgyptMenuDebugLevel4 = 8,
-	kEgyptMenuDebugLevel5 = 9,
-	kEgyptMenuDebugLevel6 = 10,
-	kEgyptMenuCount = 11
+// Labels, in EGYPTE.DEF order (runtime array 0x4cabc8.. in the EXE)
+enum EgyptMenuLabel {
+	kLabelStartGame = 0,   // Commencer le jeu
+	kLabelLoadGame,        // Charger une partie
+	kLabelVisit,           // Visiter le site
+	kLabelDocumentation,   // Consulter l'espace documentaire
+	kLabelOptions,         // Options
+	kLabelQuit,            // Quitter le jeu
+	kLabelCancel,          // Annuler
+	kLabelSaveGame,        // Sauvegarder la partie
+	kLabelResume,          // Reprendre la partie
+	kLabelAbandon,         // Abandonner la partie
+	kLabelCount
 };
 
+const char *const kMenuLabelDefaults[kLabelCount] = {
+	"Commencer le jeu",
+	"Charger une partie",
+	"Visiter le site",
+	"Consulter l'espace documentaire",
+	"Options",
+	"Quitter le jeu",
+	"Annuler",
+	"Sauvegarder la partie",
+	"Reprendre la partie",
+	"Abandonner la partie"
+};
 
-void drawCenteredString(Graphics::ManagedSurface &surface, const Graphics::Font *font,
-                        const Common::String &text, int y, uint32 color) {
-	if (!font)
-		return;
+// Menu geometry (EXE 0x80ed40 accueil state machine)
+const int kMenuTextX          = 248;  // 0x80ee9b: push 0xf8
+const int kMenuBulletX        = 224;  // 0x80eddf: push 0xe0
+const int kMenuFirstY         = 276;  // 0x80eea0: push 0x114
+const int kMenuStepY          = 30;   // 0x80edf3: add esi,0x1e
+const int kMenuHitW           = 160;  // 0x80ee0d: push 0xa0
+const int kMenuHitH           = 16;   // 0x80ee12: push 0x10
+const int kMenuBulletYOffset  = 4;    // bullets at 0x118 vs labels 0x114
+const int kSpriteBullet        = 204; // 0xcc (INTERFAC.SPR)
+const int kSpriteBulletHovered = 205; // 0xcd
 
-	const int x = MAX(0, (surface.w - font->getStringWidth(text)) / 2);
-	font->drawString(&surface, text, x, y, surface.w, color);
+// Load/save list screen geometry (EXE 0x80fe40)
+const int kListHeaderY     = 236;  // 0x80fea5: push 0xec (orange header)
+const int kListDotsTopY    = 256;  // 0x80ff4e: push 0x100
+const int kListFirstY      = 276;  // 0x810105: add edx,0x114
+const int kListStepY       = 15;   // 0x8101d3: add esi,0xf
+const int kListDotsBottomY = 426;  // 0x80fffc: push 0x1aa
+const int kListCancelY     = 456;  // 0x810094: push 0x1c8
+const int kListHitW        = 128;  // 0x80fee1: push 0x80
+const int kListRowHitH     = 10;   // 0x8100ee: push 0xa
+const int kListDotsHitH    = 14;   // 0x80fef9: push 0xe
+const int kListVisibleRows = 10;   // 0x8100af: lea ecx,[eax+0xa]
+const int kMaxSaveSlots    = 90;   // 0x8101e9: cmp eax,0x5a
+const int kListScrollDwellTicks = 10; // 0x80ff2f: cmp eax,0xa (0x81a7b0 ticks)
+
+// Startup menu entries (EXE states 2/3: labels 0x4cabc8..0x4cabdc)
+const EgyptMenuLabel kStartupEntries[] = {
+	kLabelStartGame, kLabelLoadGame, kLabelVisit,
+	kLabelDocumentation, kLabelOptions, kLabelQuit
+};
+// In-game menu entries (EXE states 0x65..: labels 0x4cac08/0x4cabcc/0x4cac0c/
+// 0x4cac10/0x4cabd8 - no Quitter, Abandonner returns to the startup menu)
+const EgyptMenuLabel kIngameEntries[] = {
+	kLabelSaveGame, kLabelLoadGame, kLabelResume,
+	kLabelAbandon, kLabelOptions
+};
+
+// Blit one interface sprite (RGB565, masked) onto a 32bpp surface.
+// Same routine as toolbar.cpp's blitEgyptSprite (top-left anchored, which is
+// the EXE unscaled draw path 0x8193a9 used for menu bullets and toolbar).
+void blitMenuSprite(const EgyptInterfaceSprite &sprite, Graphics::ManagedSurface &dst,
+                    int x, int y) {
+	static const Graphics::PixelFormat kSpriteFormat(2, 5, 6, 5, 0, 11, 5, 0, 0);
+	const int w = sprite.surface.w;
+	const int h = sprite.surface.h;
+	const Graphics::PixelFormat &dstFmt = dst.format;
+
+	for (int row = 0; row < h; row++) {
+		const int dstY = y + row;
+		if (dstY < 0 || dstY >= dst.h)
+			continue;
+
+		const byte *srcRow  = (const byte *)sprite.surface.getBasePtr(0, row);
+		const byte *maskRow = sprite.mask.data() + row * w;
+
+		for (int col = 0; col < w; col++) {
+			if (maskRow[col] == kCursorMaskTransparent)
+				continue;
+
+			const int dstX = x + col;
+			if (dstX < 0 || dstX >= dst.w)
+				continue;
+
+			const uint16 srcPixel = READ_LE_UINT16(srcRow + col * 2);
+			uint8 r, g, b;
+			kSpriteFormat.colorToRGB(srcPixel, r, g, b);
+			WRITE_LE_UINT32((byte *)dst.getBasePtr(dstX, dstY), dstFmt.RGBToColor(r, g, b));
+		}
+	}
 }
 
 } // End of anonymous namespace
@@ -75,12 +172,12 @@ bool CryOmni3DEngine_Egypt::loadMenuLabels() {
 		return true;
 
 	_menuLabels.clear();
-	_menuLabels.push_back("Reprendre la partie");  // kEgyptMenuResume
-	_menuLabels.push_back("Commencer le jeu");
-	_menuLabels.push_back("Visiter le site");
-	_menuLabels.push_back("Consulter l'espace documentaire");
-	_menuLabels.push_back("Quitter le jeu");
+	for (uint i = 0; i < kLabelCount; ++i)
+		_menuLabels.push_back(kMenuLabelDefaults[i]);
 
+	// EGYPTE.DEF carries the localized text (the EXE loads all "message"
+	// lines into the 0x4cab.. pointer array); on the FR CD they equal the
+	// defaults, other language versions would override them here.
 	Common::File file;
 	if (!file.open(Common::Path("REF/FR/EGYPTE.DEF"))) {
 		warning("Egypt: failed to open EGYPTE.DEF while loading menu labels");
@@ -99,14 +196,12 @@ bool CryOmni3DEngine_Egypt::loadMenuLabels() {
 		if (text.empty())
 			continue;
 
-		if (text.equalsIgnoreCase("Commencer le jeu"))
-			_menuLabels[kEgyptMenuStory] = text;
-		else if (text.equalsIgnoreCase("Visiter le site"))
-			_menuLabels[kEgyptMenuVisit] = text;
-		else if (text.equalsIgnoreCase("Consulter l'espace documentaire"))
-			_menuLabels[kEgyptMenuDocumentation] = text;
-		else if (text.equalsIgnoreCase("Quitter le jeu"))
-			_menuLabels[kEgyptMenuQuit] = text;
+		for (uint i = 0; i < kLabelCount; ++i) {
+			if (text.equalsIgnoreCase(kMenuLabelDefaults[i])) {
+				_menuLabels[i] = text;
+				break;
+			}
+		}
 	}
 
 	_menuLabelsLoaded = true;
@@ -194,6 +289,8 @@ Common::String CryOmni3DEngine_Egypt::getHoverTextForZone(const EgyptZone *zone)
 	return Common::String();
 }
 
+// Kept for the documentation placeholder screen; converted to the original
+// layout in the Phase C documentation rewrite.
 void CryOmni3DEngine_Egypt::drawSimpleScreen(const Common::String &title, const Common::Array<Common::String> &lines,
                                              int selectedLine, const Graphics::ManagedSurface *background) const {
 	Graphics::ManagedSurface surface(kScreenWidth, kScreenHeight, g_system->getScreenFormat());
@@ -202,102 +299,144 @@ void CryOmni3DEngine_Egypt::drawSimpleScreen(const Common::String &title, const 
 	else
 		surface.clear(surface.format.RGBToColor(0, 0, 0));
 
-	const uint32 panelColor = surface.format.RGBToColor(12, 12, 12);
-	const uint32 borderColor = surface.format.RGBToColor(180, 150, 70);
-	const uint32 textColor = surface.format.RGBToColor(240, 232, 210);
-	const uint32 highlightColor = surface.format.RGBToColor(255, 210, 90);
-	const uint32 dimColor = surface.format.RGBToColor(160, 160, 160);
+	const uint32 textColor = surface.format.RGBToColor(255, 255, 255);
+	const uint32 highlightColor = surface.format.RGBToColor(224, 112, 0);
 
-	const Common::Rect panel(48, 210, 592, 448);
-	surface.fillRect(panel, panelColor);
-	surface.frameRect(panel, borderColor);
-
-	const Graphics::Font *titleFont = FontMan.getFontByUsage(Graphics::FontManager::kBigGUIFont);
 	const Graphics::Font *bodyFont = FontMan.getFontByUsage(Graphics::FontManager::kGUIFont);
-	if (!titleFont)
-		titleFont = bodyFont;
-
-	drawCenteredString(surface, titleFont, title, 230, highlightColor);
-
-	int y = 282;
-	for (uint i = 0; i < lines.size(); ++i, y += 30) {
-		const uint32 color = ((int)i == selectedLine) ? highlightColor : textColor;
-		drawCenteredString(surface, bodyFont, lines[i], y, color);
+	if (bodyFont) {
+		bodyFont->drawString(&surface, title, 248, 236, 320, highlightColor);
+		int y = 276;
+		for (uint i = 0; i < lines.size(); ++i, y += 15) {
+			const uint32 color = ((int)i == selectedLine) ? highlightColor : textColor;
+			bodyFont->drawString(&surface, lines[i], 248, y, 320, color);
+		}
 	}
-
-	drawCenteredString(surface, bodyFont, "Esc: quitter / clic: choisir", 414, dimColor);
 
 	g_system->copyRectToScreen(surface.getPixels(), surface.pitch, 0, 0, surface.w, surface.h);
 	g_system->updateScreen();
 }
 
-void CryOmni3DEngine_Egypt::drawMenuScreen(Graphics::ManagedSurface &surface, int hoveredEntry, bool hasBackground) const {
-	if (!hasBackground)
-		surface.clear(surface.format.RGBToColor(0, 0, 0));
+// Read back the description of one save slot (first kSaveDescriptionLen
+// bytes of the file, zero-padded - the layout the EXE also uses, 20 bytes)
+Common::String CryOmni3DEngine_Egypt::getSaveDescription(int slot) const {
+	Common::InSaveFile *in = _saveFileMan->openForLoading(getSaveStateName(slot));
+	if (!in)
+		return Common::String();
 
-	const uint32 panelColor = hasBackground ? surface.format.RGBToColor(18, 18, 18) : surface.format.RGBToColor(0, 0, 0);
-	const uint32 borderColor = surface.format.RGBToColor(164, 124, 48);
-	const uint32 titleColor = surface.format.RGBToColor(232, 197, 104);
-	const uint32 textColor = surface.format.RGBToColor(240, 233, 214);
-	const uint32 hoverColor = surface.format.RGBToColor(255, 214, 96);
-	const uint32 hintColor = surface.format.RGBToColor(180, 180, 180);
+	char desc[kSaveDescriptionLen + 1];
+	desc[kSaveDescriptionLen] = '\0';
+	if (in->read(desc, kSaveDescriptionLen) != kSaveDescriptionLen)
+		desc[0] = '\0';
+	delete in;
+	return Common::String(desc);
+}
 
-	// Left panel: extend upward to fit the optional Resume entry.
-	const Common::Rect panel(36, 234, 398, 454);
-	surface.fillRect(panel, panelColor);
-	surface.frameRect(panel, borderColor);
+// Load/save list screen - EXE 0x80fe40.
+// Returns the selected slot (0-based) or -1 on cancel/abort.
+int CryOmni3DEngine_Egypt::runSaveListScreen(bool saveMode, const Graphics::ManagedSurface *background) {
+	Common::Array<Common::String> descriptions;
+	descriptions.resize(kMaxSaveSlots);
+	for (int i = 0; i < kMaxSaveSlots; ++i)
+		descriptions[i] = getSaveDescription(i);
 
-	const Graphics::Font *titleFont = FontMan.getFontByUsage(Graphics::FontManager::kBigGUIFont);
-	const Graphics::Font *bodyFont = FontMan.getFontByUsage(Graphics::FontManager::kGUIFont);
-	if (!titleFont)
-		titleFont = bodyFont;
+	Graphics::ManagedSurface surface(kScreenWidth, kScreenHeight, g_system->getScreenFormat());
+	Egypt_FontManager &fm = _fontManager;
+	const uint32 white  = surface.format.RGBToColor(255, 255, 255);
+	const uint32 orange = surface.format.RGBToColor(224, 112, 0); // 0x4d6070
 
-	const Common::String title = hasBackground ? "Menu principal" : "Egypt 1156";
-	if (titleFont)
-		titleFont->drawString(&surface, title, 56, 252, 320, titleColor);
+	int scrollOffset = 0;  // EXE global 0x4c288c
+	int dwellTicks = 0;    // EXE tick counter 0x81a7b0: >= 10 hovering "..." scrolls
 
-	// Resume entry: shown active only when a game is in progress.
-	{
-		const uint32 resumeColor = _isPlaying
-		    ? ((kEgyptMenuResume == hoveredEntry) ? hoverColor : textColor)
-		    : surface.format.RGBToColor(90, 90, 90);
-		Common::String resumeLine = Common::String::format("[R] %s", _menuLabels[kEgyptMenuResume].c_str());
-		if (bodyFont)
-			bodyFont->drawString(&surface, resumeLine, 58, 282, 320, resumeColor);
+	const Common::String header = _menuLabels[saveMode ? kLabelSaveGame : kLabelLoadGame];
+	const Common::String dots = "...";  // EXE string VA 0x4350f8
+
+	while (!shouldAbort()) {
+		if (background)
+			surface.blitFrom(*background);
+		else
+			surface.clear(surface.format.RGBToColor(0, 0, 0));
+
+		const Common::Point mouse = getMousePos();
+		const bool canScrollUp   = scrollOffset > 0;
+		const bool canScrollDown = scrollOffset + 1 < kMaxSaveSlots; // EXE caps offset at 0x5a
+		const bool hoverDotsTop = canScrollUp &&
+		    Common::Rect(kMenuTextX, kListDotsTopY, kMenuTextX + kListHitW,
+		                 kListDotsTopY + kListDotsHitH).contains(mouse);
+		const bool hoverDotsBottom = canScrollDown &&
+		    Common::Rect(kMenuTextX, kListDotsBottomY, kMenuTextX + kListHitW,
+		                 kListDotsBottomY + kListDotsHitH).contains(mouse);
+		const bool hoverCancel =
+		    Common::Rect(kMenuTextX, kListCancelY, kMenuTextX + kListHitW,
+		                 kListCancelY + kMenuHitH).contains(mouse);
+
+		fm.setCurrentFont(Egypt_FontManager::kSlotMenu); // font 2 throughout (0x80fe40)
+
+		// Header always orange (EXE 0x80fe7a sets 0x4d6070 before the header)
+		fm.setForeColor(orange);
+		fm.displayStr(surface, kMenuTextX, kListHeaderY, header);
+
+		if (canScrollUp) {
+			fm.setForeColor(hoverDotsTop ? orange : white);
+			fm.displayStr(surface, kMenuTextX, kListDotsTopY, dots);
+		}
+
+		int hoveredRow = -1;
+		for (int i = 0; i < kListVisibleRows; ++i) {
+			const int slot = scrollOffset + i;
+			if (slot >= kMaxSaveSlots)
+				break;
+			const int y = kListFirstY + i * kListStepY;
+			const bool rowHovered =
+			    Common::Rect(kMenuTextX, y, kMenuTextX + kListHitW,
+			                 y + kListRowHitH).contains(mouse);
+			if (rowHovered)
+				hoveredRow = slot;
+			if (descriptions[slot].empty())
+				continue; // empty rows are blank (EXE skips names with a NUL first byte)
+			fm.setForeColor(rowHovered ? orange : white);
+			fm.displayStr(surface, kMenuTextX, y, descriptions[slot]);
+		}
+
+		if (canScrollDown) {
+			fm.setForeColor(hoverDotsBottom ? orange : white);
+			fm.displayStr(surface, kMenuTextX, kListDotsBottomY, dots);
+		}
+
+		fm.setForeColor(hoverCancel ? orange : white);
+		fm.displayStr(surface, kMenuTextX, kListCancelY, _menuLabels[kLabelCancel]);
+
+		g_system->copyRectToScreen(surface.getPixels(), surface.pitch, 0, 0, surface.w, surface.h);
+		g_system->updateScreen();
+		g_system->delayMillis(10);
+		pollEvents();
+
+		// Hover-dwell scrolling (EXE: 0x81a7b0 tick counter reaches 10)
+		if (hoverDotsTop || hoverDotsBottom) {
+			if (++dwellTicks >= kListScrollDwellTicks) {
+				dwellTicks = 0;
+				scrollOffset += hoverDotsBottom ? 1 : -1;
+			}
+		} else {
+			dwellTicks = 0;
+		}
+
+		if (getCurrentMouseButton() == 1) {
+			waitMouseRelease();
+			if (hoverCancel)
+				return -1;
+			if (hoveredRow >= 0) {
+				// Load mode requires an existing save; save mode accepts
+				// empty rows too (new save at that slot)
+				if (saveMode || !descriptions[hoveredRow].empty())
+					return hoveredRow;
+			}
+		}
+
+		if (getNextKey().keycode == Common::KEYCODE_ESCAPE)
+			return -1;
 	}
 
-	// Remaining fixed entries: Story, Visit, Docs, Quit.
-	const char *const hotkeys[kEgyptMenuDebugLevel1 - kEgyptMenuStory] = { "1", "2", "3", "Esc" };
-	int y = 312;
-	for (int i = kEgyptMenuStory; i < kEgyptMenuDebugLevel1; ++i, y += 30) {
-		const uint32 color = (i == hoveredEntry) ? hoverColor : textColor;
-		Common::String line = Common::String::format("[%s] %s",
-		    hotkeys[i - kEgyptMenuStory], _menuLabels[i].c_str());
-		if (bodyFont)
-			bodyFont->drawString(&surface, line, 58, y, 320, color);
-	}
-
-	if (bodyFont)
-		bodyFont->drawString(&surface, hasBackground ? "ACC_FR.TGA + libelles du jeu" : "Fallback menu", 58, 426, 320, hintColor);
-
-	const uint32 debugBorderColor = surface.format.RGBToColor(60, 140, 60);
-	const uint32 debugTitleColor = surface.format.RGBToColor(100, 210, 100);
-
-	const Common::Rect debugPanel(410, 240, 632, 452);
-	surface.fillRect(debugPanel, panelColor);
-	surface.frameRect(debugPanel, debugBorderColor);
-
-	if (titleFont)
-		titleFont->drawString(&surface, "DEBUG", 426, 258, 200, debugTitleColor);
-
-	int dy = 292;
-	for (int i = kEgyptMenuDebugLevel1; i < kEgyptMenuCount; ++i, dy += 25) {
-		const int level = i - kEgyptMenuDebugLevel1 + 1;
-		const uint32 color = (i == hoveredEntry) ? hoverColor : textColor;
-		Common::String line = Common::String::format("[F%d] L%d -> %s", level, level, kLevelStartScenes[i - kEgyptMenuDebugLevel1]);
-		if (bodyFont)
-			bodyFont->drawString(&surface, line, 422, dy, 204, color);
-	}
+	return -1;
 }
 
 void CryOmni3DEngine_Egypt::playStartupLogoIfPresent() {
@@ -323,166 +462,130 @@ void CryOmni3DEngine_Egypt::playStartupLogoIfPresent() {
 CryOmni3DEngine_Egypt::EgyptStartupMode CryOmni3DEngine_Egypt::showMainMenu() {
 	loadMenuLabels();
 
+	// EXE 0x80ed60: ACC_FR.TGA drawn to the back buffer, copied to screen
 	Graphics::ManagedSurface background;
 	const bool hasBackground = loadTgaImage(getFilePath(kFileTypeSpriteImage, "ACC_FR.TGA"), background, true);
-	if (hasBackground) {
-		debugC(kDebugFile, "EGYPT_MENU: asset=SPRITE/ACC_FR.TGA type=CPx5_wrapped_tga status=likely");
-	} else {
-		debugC(kDebugFile, "EGYPT_MENU: asset=temporary_text_menu reason=real menu asset not identified yet");
-	}
+	if (!hasBackground)
+		warning("Egypt: menu background SPRITE/ACC_FR.TGA not found");
 
 	Graphics::ManagedSurface surface(kScreenWidth, kScreenHeight, g_system->getScreenFormat());
-	if (hasBackground)
-		surface.blitFrom(background);
-	else
-		surface.clear(surface.format.RGBToColor(0, 0, 0));
-
-	Common::Rect boxes[kEgyptMenuCount];
-	int hoveredEntry = _isPlaying ? kEgyptMenuResume : kEgyptMenuStory;
-	// Resume entry (conditional).
-	boxes[kEgyptMenuResume] = Common::Rect(52, 278, 366, 302);
-	// Story, Visit, Docs, Quit.
-	for (int i = kEgyptMenuStory; i < kEgyptMenuDebugLevel1; ++i)
-		boxes[i] = Common::Rect(52, 308 + (i - kEgyptMenuStory) * 30, 366, 332 + (i - kEgyptMenuStory) * 30);
-	// Debug levels.
-	for (int i = kEgyptMenuDebugLevel1; i < kEgyptMenuCount; ++i) {
-		const int di = i - kEgyptMenuDebugLevel1;
-		boxes[i] = Common::Rect(414, 292 + di * 25, 628, 314 + di * 25);
-	}
+	Egypt_FontManager &fm = _fontManager;
+	const uint32 white  = surface.format.RGBToColor(255, 255, 255); // 0x4d9974
+	const uint32 orange = surface.format.RGBToColor(224, 112, 0);   // 0x4d6070
 
 	showMouse(true);
-	setInterfaceCursor(kEgyptCursorDefault);
+	setInterfaceCursor(kEgyptCursorDefault); // EXE 0x810250: menu cursor = INTERFAC sprite 13
 	clearKeys();
 	waitMouseRelease();
 
-	bool redraw = true;
+	// Startup variant (EXE state 2) vs in-game variant (EXE state 0x65)
+	bool inGameVariant = _isPlaying;
+
 	while (!shouldAbort()) {
-		if (redraw) {
-			if (hasBackground)
-				surface.blitFrom(background);
-			else
-				surface.clear(surface.format.RGBToColor(0, 0, 0));
-			drawMenuScreen(surface, hoveredEntry, hasBackground);
-			g_system->copyRectToScreen(surface.getPixels(), surface.pitch, 0, 0, surface.w, surface.h);
-			redraw = false;
-		}
+		const EgyptMenuLabel *entries = inGameVariant ? kIngameEntries : kStartupEntries;
+		const int entryCount = inGameVariant ? ARRAYSIZE(kIngameEntries) : ARRAYSIZE(kStartupEntries);
 
-		g_system->updateScreen();
-		g_system->delayMillis(10);
-
-		pollEvents();
+		if (hasBackground)
+			surface.blitFrom(background);
+		else
+			surface.clear(surface.format.RGBToColor(0, 0, 0));
 
 		const Common::Point mouse = getMousePos();
-		for (int i = 0; i < kEgyptMenuCount; ++i) {
-			if (boxes[i].contains(mouse) && hoveredEntry != i) {
+		int hoveredEntry = -1;
+		for (int i = 0; i < entryCount; ++i) {
+			const int y = kMenuFirstY + i * kMenuStepY;
+			// EXE 0x80ee0d..: hover rect (x=224, y, 160x16)
+			if (Common::Rect(kMenuBulletX, y, kMenuBulletX + kMenuHitW, y + kMenuHitH).contains(mouse))
 				hoveredEntry = i;
-				redraw = true;
-			}
 		}
 
-		if (getCurrentMouseButton() == 1) {
-			for (int i = 0; i < kEgyptMenuCount; ++i) {
-				if (boxes[i].contains(mouse)) {
-					waitMouseRelease();
-					showMouse(false);
-					switch (i) {
-					case kEgyptMenuResume:
-						if (_isPlaying)
-							return EgyptStartupMode::kResume;
-						break;
-					case kEgyptMenuStory:
-						return EgyptStartupMode::kStory;
-					case kEgyptMenuVisit:
-						return EgyptStartupMode::kVisit;
-					case kEgyptMenuDocumentation:
-						return EgyptStartupMode::kDocumentation;
-					case kEgyptMenuDebugLevel1:
-						return EgyptStartupMode::kDebugLevel1;
-					case kEgyptMenuDebugLevel2:
-						return EgyptStartupMode::kDebugLevel2;
-					case kEgyptMenuDebugLevel3:
-						return EgyptStartupMode::kDebugLevel3;
-					case kEgyptMenuDebugLevel4:
-						return EgyptStartupMode::kDebugLevel4;
-					case kEgyptMenuDebugLevel5:
-						return EgyptStartupMode::kDebugLevel5;
-					case kEgyptMenuDebugLevel6:
-						return EgyptStartupMode::kDebugLevel6;
-					default:
-						return EgyptStartupMode::kQuit;
-					}
-				}
-			}
+		fm.setCurrentFont(Egypt_FontManager::kSlotMenu); // font 2 = FONT03.CRF
+
+		for (int i = 0; i < entryCount; ++i) {
+			const int y = kMenuFirstY + i * kMenuStepY;
+
+			// Bullet sprite 204, 205 when hovered, at (224, y+4) (EXE 0x80edd5/0x80ee3c)
+			const int sprId = (i == hoveredEntry) ? kSpriteBulletHovered : kSpriteBullet;
+			if ((uint)sprId < _spriteLoader.interfaceSpriteCount())
+				blitMenuSprite(_spriteLoader.interfaceSprite(sprId), surface,
+				               kMenuBulletX, y + kMenuBulletYOffset);
+
+			fm.setForeColor((i == hoveredEntry) ? orange : white);
+			fm.displayStr(surface, kMenuTextX, y, _menuLabels[entries[i]]);
 		}
 
-		Common::KeyCode keycode = getNextKey().keycode;
-		if ((keycode == Common::KEYCODE_r) && _isPlaying) {
-			showMouse(false);
-			return EgyptStartupMode::kResume;
-		} else if (keycode == Common::KEYCODE_1 || keycode == Common::KEYCODE_KP1) {
-			showMouse(false);
-			return EgyptStartupMode::kStory;
-		} else if (keycode == Common::KEYCODE_2 || keycode == Common::KEYCODE_KP2) {
-			showMouse(false);
-			return EgyptStartupMode::kVisit;
-		} else if (keycode == Common::KEYCODE_3 || keycode == Common::KEYCODE_KP3) {
-			showMouse(false);
-			return EgyptStartupMode::kDocumentation;
-		} else if (keycode == Common::KEYCODE_ESCAPE || keycode == Common::KEYCODE_q) {
-			showMouse(false);
-			return EgyptStartupMode::kQuit;
-		} else if (keycode == Common::KEYCODE_F1) {
-			showMouse(false);
-			return EgyptStartupMode::kDebugLevel1;
-		} else if (keycode == Common::KEYCODE_F2) {
-			showMouse(false);
-			return EgyptStartupMode::kDebugLevel2;
-		} else if (keycode == Common::KEYCODE_F3) {
-			showMouse(false);
-			return EgyptStartupMode::kDebugLevel3;
-		} else if (keycode == Common::KEYCODE_F4) {
-			showMouse(false);
-			return EgyptStartupMode::kDebugLevel4;
-		} else if (keycode == Common::KEYCODE_F5) {
-			showMouse(false);
-			return EgyptStartupMode::kDebugLevel5;
-		} else if (keycode == Common::KEYCODE_F6) {
-			showMouse(false);
-			return EgyptStartupMode::kDebugLevel6;
-		} else if (keycode == Common::KEYCODE_UP) {
-			hoveredEntry = (hoveredEntry + kEgyptMenuCount - 1) % kEgyptMenuCount;
-			redraw = true;
-		} else if (keycode == Common::KEYCODE_DOWN) {
-			hoveredEntry = (hoveredEntry + 1) % kEgyptMenuCount;
-			redraw = true;
-		} else if (keycode == Common::KEYCODE_RETURN || keycode == Common::KEYCODE_SPACE) {
-			showMouse(false);
-			switch (hoveredEntry) {
-			case kEgyptMenuResume:
-				if (_isPlaying)
-					return EgyptStartupMode::kResume;
-				break;
-			case kEgyptMenuStory:
+		g_system->copyRectToScreen(surface.getPixels(), surface.pitch, 0, 0, surface.w, surface.h);
+		g_system->updateScreen();
+		g_system->delayMillis(10);
+		pollEvents();
+
+		if (getCurrentMouseButton() == 1 && hoveredEntry >= 0) {
+			waitMouseRelease();
+			const EgyptMenuLabel action = entries[hoveredEntry];
+			switch (action) {
+			case kLabelStartGame:
+				showMouse(false);
 				return EgyptStartupMode::kStory;
-			case kEgyptMenuVisit:
-				return EgyptStartupMode::kVisit;
-			case kEgyptMenuDocumentation:
-				return EgyptStartupMode::kDocumentation;
-			case kEgyptMenuDebugLevel1:
-				return EgyptStartupMode::kDebugLevel1;
-			case kEgyptMenuDebugLevel2:
-				return EgyptStartupMode::kDebugLevel2;
-			case kEgyptMenuDebugLevel3:
-				return EgyptStartupMode::kDebugLevel3;
-			case kEgyptMenuDebugLevel4:
-				return EgyptStartupMode::kDebugLevel4;
-			case kEgyptMenuDebugLevel5:
-				return EgyptStartupMode::kDebugLevel5;
-			case kEgyptMenuDebugLevel6:
-				return EgyptStartupMode::kDebugLevel6;
-			default:
-				return EgyptStartupMode::kQuit;
+			case kLabelLoadGame: {
+				const int slot = runSaveListScreen(false, hasBackground ? &background : nullptr);
+				if (slot >= 0) {
+					_pendingLoadSlot = slot;
+					showMouse(false);
+					return EgyptStartupMode::kMainMenu; // run() applies the pending load
+				}
+				break; // cancelled - back to the menu (EXE result 0x8002 -> state 1)
 			}
+			case kLabelVisit:
+				showMouse(false);
+				return EgyptStartupMode::kVisit;
+			case kLabelDocumentation:
+				showMouse(false);
+				return EgyptStartupMode::kDocumentation;
+			case kLabelOptions:
+				// EXE state 6 -> options screen 0x810400 (display modes,
+				// music...). Not ported: ScummVM options cover this.
+				debugC(kDebugVariable, "EGYPT_MENU: options entry not ported (EXE 0x810400)");
+				break;
+			case kLabelQuit:
+				showMouse(false);
+				return EgyptStartupMode::kQuit;
+			case kLabelSaveGame: {
+				const int slot = runSaveListScreen(true, hasBackground ? &background : nullptr);
+				if (slot >= 0) {
+					// The EXE opens an inline name editor (0x8107f0); we
+					// store a generated description instead for now.
+					Common::String desc = _savedSceneName.empty()
+					    ? Common::String("Egypte") : _savedSceneName;
+					saveGameToSlot((uint)slot + 1, desc);
+				}
+				break;
+			}
+			case kLabelResume:
+				showMouse(false);
+				return EgyptStartupMode::kResume;
+			case kLabelAbandon:
+				// EXE: back to the startup variant (state 0, action cleared)
+				_isPlaying = false;
+				_savedSceneName.clear();
+				inGameVariant = false;
+				break;
+			default:
+				break;
+			}
+			clearKeys();
+			waitMouseRelease();
+		}
+
+		const Common::KeyCode keycode = getNextKey().keycode;
+		if (keycode == Common::KEYCODE_ESCAPE) {
+			showMouse(false);
+			return inGameVariant ? EgyptStartupMode::kResume : EgyptStartupMode::kQuit;
+		}
+		// Debug shortcuts (port-only, not in the EXE menu)
+		if (keycode >= Common::KEYCODE_F1 && keycode <= Common::KEYCODE_F6) {
+			showMouse(false);
+			return (EgyptStartupMode)((int)EgyptStartupMode::kDebugLevel1 +
+			                          (keycode - Common::KEYCODE_F1));
 		}
 	}
 
