@@ -45,6 +45,15 @@ struct EgyptDocTextRun {
 	int linkIndex; // -1 = normal text, >= 0 = index into EgyptDocumentationRecord::links
 };
 
+// One "@ type x y text" line of ESPDOC.TXT: a label drawn onto the record
+// photo (EXE element array 0x45eca0, stride 76: +0 type, +4 x, +8 y, +12 text)
+struct EgyptDocAnnotation {
+	int type = 0; // font from EXE table 0x435060 = {5, 4, 7}; type 2 = boxed
+	int x = 0;    // relative to the photo top-left
+	int y = 0;
+	Common::String text;
+};
+
 struct EgyptDocumentationRecord {
 	int id = -1;
 	Common::String title;
@@ -53,12 +62,16 @@ struct EgyptDocumentationRecord {
 	Common::String body;
 	Common::Array<EgyptDocTextRun> bodyRuns;
 	Common::Array<int> links;
+	Common::Array<EgyptDocAnnotation> annotations;
 };
 
 // In-game documentation ("base documentaire"): record data loaded from
 // REF/FR/ESPDOC.TXT + ESPARBO.TXT (tree), a record viewer with inline
 // hyperlinks, and the standalone summary browser reached from the menu.
 // Works on engine services through a friend pointer, Versailles-style.
+// Layout reverse-engineered from EGYPTE.EXE, see
+// devtools-egypt/doc_viewer_reverse_notes.md (state machine 0x801000/
+// 0x801200 on global 0x4c2078, fiche page draw 0x802b80).
 class Egypt_Documentation {
 public:
 	explicit Egypt_Documentation(CryOmni3DEngine_Egypt *engine) : _engine(engine) {}
@@ -66,10 +79,13 @@ public:
 	// Loads records and tree on first call; returns false when data files are missing
 	bool loadData();
 
-	// Record viewer (photo, hyperlinked body, prev/next/back)
-	void displayRecord(int docId);
+	// Record viewer (fiche page). In-game calls (standalone=false) only
+	// offer the exit spiral, like the EXE with bit15 of 0x4c2078 set;
+	// the standalone browser gets links, prev/next arrows and the index.
+	void displayRecord(int docId, bool standalone = false);
 
-	// Standalone documentation browser (menu entry): theme summary + viewer
+	// Standalone documentation browser (menu entry): SOMMAIRE.TGA summary,
+	// theme fiche lists and the record viewer
 	void runStandaloneMode();
 
 	// Zone integration used by the warp click handler
@@ -78,26 +94,17 @@ public:
 	void displayZone(const EgyptZone &zone);
 
 private:
-	// Word-wrapped layout of one record body
-	struct DocWord     { Common::String text; int linkIndex; bool lineBreak; };
-	struct DocLineWord { int wordIdx; int x; };
-	struct DocLine     { Common::Array<DocLineWord> words; };
-	struct DocLinkHit  { Common::Rect rect; int linkIndex; };
+	struct DocLinkHit { Common::Rect rect; int linkIndex; };
 
-	// Viewer state shared by prepare/draw/handle
+	// Viewer state shared by draw/handle
 	struct ViewerState {
-		int selectedTheme = 0;
+		bool standalone = false;
 		Common::Array<int> themeRecords;
 		int currentRecordIndex = 0;
-		int scrollOffset = 0;
 
 		const EgyptDocumentationRecord *record = nullptr;
-		Common::Array<DocWord> words;
-		Common::Array<DocLine> lines;
-		int visibleLines = 1;
-		int maxScroll = 0;
-
-		Common::Array<DocLinkHit> linkHits;
+		Common::Array<DocLinkHit> linkHits; // rebuilt by drawRecordPage
+		int hoveredLink = -1;
 
 		int loadedBgTheme = -2;
 		Graphics::ManagedSurface background;
@@ -108,17 +115,34 @@ private:
 	void collectLeafRecords(int nodeId, Common::Array<int> &out) const;
 	int findThemeIndexForRecord(int recordId) const;
 
-	// displayRecord() split: layout preparation, pure drawing, event handling
-	bool prepareRecord(ViewerState &state, const Graphics::Font *bodyFont);
-	void drawRecord(ViewerState &state, const Graphics::Font *titleFont,
-	                const Graphics::Font *bodyFont, const Common::Point &mousePos);
+	// Fiche page draw (EXE 0x802b80) and event handling
+	void drawRecordPage(ViewerState &state, const Common::Point &mousePos);
 	// Returns true when the viewer should reload the current record
 	bool handleRecordEvents(ViewerState &state, bool &exitViewer, bool &redraw);
+	bool openRecordById(ViewerState &state, int recordId);
+
+	// One row of REF/FR/EspIndex.txt (EXE parser 0x806190, entry table
+	// 0x469f50 stride 68: 64-byte name + record id at +0x40)
+	struct AlphaIndexEntry {
+		Common::String name;
+		int id = -1; // -1 = ";X" letter header row, never clickable
+	};
+
+	// Alphabetical index overlay (EXE 0x802520/0x803580); returns the
+	// clicked record id or -1
+	int runAlphabeticalIndex(const Graphics::ManagedSurface &background);
+	bool loadAlphaIndex();
+
+	// Special chronology page for records 211/212 (EXE state 0xf,
+	// handler 0x8019bd)
+	void runChronologyPage(int recordId, bool standalone);
 
 	CryOmni3DEngine_Egypt *_engine;
 	Common::Array<EgyptDocumentationRecord> _records;
 	Common::HashMap<int, Common::Array<int> > _tree;
 	bool _dataLoaded = false;
+	Common::Array<AlphaIndexEntry> _indexEntries;
+	bool _indexLoaded = false;
 };
 
 } // End of namespace Egypt

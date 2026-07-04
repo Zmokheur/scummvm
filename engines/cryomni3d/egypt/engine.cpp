@@ -296,6 +296,10 @@ Common::Path CryOmni3DEngine_Egypt::getFilePath(EgyptFileType type, const Common
 	case kFileTypeDocTree:
 		return Common::Path("REF/FR/ESPARBO.TXT");
 
+	case kFileTypeDocIndex:
+		// "REF\FR\EspIndex.txt" (EXE loader 0x806190, entry table 0x469f50)
+		return Common::Path("REF/FR/EspIndex.txt");
+
 	case kFileTypeVoice:
 		return Common::Path(Common::String::format("sound/FR/%s.apc", name.c_str()));
 

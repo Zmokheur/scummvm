@@ -71,6 +71,7 @@ enum EgyptFileType {
 	kFileTypeLevelTxt,         // ref/FR/Level.txt (dialogue trees)
 	kFileTypeDocRecords,       // REF/FR/ESPDOC.TXT
 	kFileTypeDocTree,          // REF/FR/ESPARBO.TXT
+	kFileTypeDocIndex,         // REF/FR/EspIndex.txt (alphabetical index, EXE parser 0x806190)
 	kFileTypeVoice,            // sound/FR/<name>.apc
 	kFileTypeFont              // SPRITE/<name> (FONT01.CRF..FONT11.CRF, EXE loader 0x80C4B0)
 };
