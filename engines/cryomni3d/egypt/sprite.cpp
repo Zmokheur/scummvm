@@ -72,10 +72,36 @@ bool Egypt_SpriteLoader::loadInterfaceSprites(const Common::Path &filename) {
 		const uint16 height = READ_LE_UINT16(decompressed.data() + entryOffset + 4);
 		const uint16 width  = READ_LE_UINT16(decompressed.data() + entryOffset + 6);
 		const uint32 pixelDataSize = (uint32)width * (uint32)height * 2;
+		uint32 pixelDataOffset = pixelOffset;
 
-		if (width == 0 || height == 0 || pixelOffset + pixelDataSize > decompressed.size()) {
+		if (width == 0 || height == 0 || pixelOffset >= decompressed.size()) {
 			warning("Egypt: invalid interface sprite %u offset=0x%08x size=%ux%u",
 			        i, pixelOffset, width, height);
+			_interfaceSprites.clear();
+			return false;
+		}
+
+		// Some late INTERFAC entries store a TXEN/NEXT placement header before
+		// the raw RGB565 pixels; the table dimensions still describe the pixels.
+		if (pixelOffset + 12 <= decompressed.size()) {
+			const uint32 magic = READ_BE_UINT32(decompressed.data() + pixelOffset);
+			if (magic == MKTAG('T', 'X', 'E', 'N') || magic == MKTAG('N', 'E', 'X', 'T')) {
+				const uint16 txenHeight = READ_LE_UINT16(decompressed.data() + pixelOffset + 8);
+				const uint16 txenWidth  = READ_LE_UINT16(decompressed.data() + pixelOffset + 10);
+				if (txenWidth != width || txenHeight != height ||
+				    pixelOffset + 12 + pixelDataSize > decompressed.size()) {
+					warning("Egypt: invalid TXEN interface sprite %u offset=0x%08x table=%ux%u header=%ux%u",
+					        i, pixelOffset, width, height, txenWidth, txenHeight);
+					_interfaceSprites.clear();
+					return false;
+				}
+				pixelDataOffset += 12;
+			}
+		}
+
+		if (pixelDataOffset + pixelDataSize > decompressed.size()) {
+			warning("Egypt: invalid interface sprite %u offset=0x%08x size=%ux%u",
+			        i, pixelDataOffset, width, height);
 			_interfaceSprites.clear();
 			return false;
 		}
@@ -84,11 +110,11 @@ bool Egypt_SpriteLoader::loadInterfaceSprites(const Common::Path &filename) {
 		sprite.surface.create(width, height, kEgyptSpriteFormat);
 		sprite.hotspotX = width / 2;
 		sprite.hotspotY = height / 2;
-		memcpy(sprite.surface.getPixels(), decompressed.data() + pixelOffset, pixelDataSize);
+		memcpy(sprite.surface.getPixels(), decompressed.data() + pixelDataOffset, pixelDataSize);
 
 		sprite.mask.resize(width * height);
 		for (uint pixel = 0; pixel < width * height; ++pixel) {
-			const uint16 color = READ_LE_UINT16(decompressed.data() + pixelOffset + pixel * 2);
+			const uint16 color = READ_LE_UINT16(decompressed.data() + pixelDataOffset + pixel * 2);
 			sprite.mask[pixel] = (color == 0) ? kCursorMaskTransparent : kCursorMaskOpaque;
 		}
 	}
@@ -195,8 +221,8 @@ void Egypt_SpriteLoader::decodeOverlayFrame(uint frameIndex) {
 	int16 txenY = 0;
 	int16 txenX = 0;
 	if (ptr + 12 <= end) {
-		const uint32 magic = READ_LE_UINT32(ptr);
-		if (magic == 0x4e455854u /* TXEN */ || magic == 0x5458454eu /* NEXT */) {
+		const uint32 magic = READ_BE_UINT32(ptr);
+		if (magic == MKTAG('T', 'X', 'E', 'N') || magic == MKTAG('N', 'E', 'X', 'T')) {
 			txenY = (int16)READ_LE_UINT16(ptr + 4);
 			txenX = (int16)READ_LE_UINT16(ptr + 6);
 			ptr += 12;
@@ -309,8 +335,8 @@ void Egypt_SpriteLoader::decodeSceneSprFrame(uint frameIndex) {
 	int16 txenY = 0;
 	int16 txenX = 0;
 	if (ptr + 12 <= end) {
-		const uint32 magic = READ_LE_UINT32(ptr);
-		if (magic == 0x4e455854u /* TXEN LE */ || magic == 0x5458454eu /* NEXT LE */) {
+		const uint32 magic = READ_BE_UINT32(ptr);
+		if (magic == MKTAG('T', 'X', 'E', 'N') || magic == MKTAG('N', 'E', 'X', 'T')) {
 			txenY = (int16)READ_LE_UINT16(ptr + 4);
 			txenX = (int16)READ_LE_UINT16(ptr + 6);
 			ptr += 12;
