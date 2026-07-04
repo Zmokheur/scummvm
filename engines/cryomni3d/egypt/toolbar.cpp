@@ -62,11 +62,28 @@ namespace {
 // Navigation shortcuts (EXE 0x80b980 state machine):
 //   Zone 0x70-0x75 = Windows VK_F1-VK_F6 -> scenes S00,D01,A02,N01A,M01,K43
 //   Zone 0x76     = Windows VK_F7         -> dismiss
+//
+// Hovered slot label (EXE 0x808df2..0x808e97): with an empty hand, hovering
+// a filled slot draws the object display name (DEF name table 0x4d1278) at
+// (1, 0x1e1-param) in font 10, current color (white), plus an orange
+// connector line at y=0x1e5-param from x=nameWidth+4 to slotX+15 and a 4 px
+// vertical tick at (slotX+14, 0x1e6-param). param=48 at rest, so the label
+// row is screen y=433. No label in visit mode: the slots are empty there
+// and the EXE label is purely slot-content driven.
+//
+// Sprite 18 = visual clue list button (EXE hit 0x809131, flag 0x4c207c set
+// at 0x809165, list drawn at 0x808f6c..0x809121): with an empty hand it
+// opens a right-aligned list, above the toolbar, of the collected visual
+// clues (variables IndiceVisuel01..16 walked by index at 0x808c05, names =
+// first 16 DEF messages via pointer array 0x4cab88); clicking an entry
+// warps to the eye scene named by table 0x435738 = "ALL\" + the suffix
+// embedded in the variable name. The list closes as soon as the mouse
+// leaves it (0x8090cc..0x809100) or on a click outside a row (0x809105).
 
 static const int kSpriteSlot       = 15;  // 30x30 - empty inventory slot
 static const int kSpriteLeft       = 16;  // 20x20 - view-item / eye button (inactive)
 static const int kSpriteLeftActive = 17;  // 20x20 - eye button (active: main has eye action)
-static const int kSpriteRight      = 18;  // 20x20 - documentation button
+static const int kSpriteRight      = 18;  // 20x20 - visual clue list button (EXE 0x809131)
 static const int kSpriteOptions    = 19;  // 20x20 - options / dismiss (bottom-aligned)
 
 // Object icon sprite base: objectId + kItemIconBase (EXE: objectId + 0x92)
@@ -153,6 +170,45 @@ static void blitEgyptSprite(const EgyptInterfaceSprite &sprite, Graphics::Manage
 	}
 }
 
+// 50/50 average of each pixel with the dark tint {30, 25, 18} - EXE
+// 0x817680 (params at 0x4352fc/0x435300/0x435304), used for the toolbar
+// background (call 0x8089c5) and the clue list box (call 0x808fac). The
+// EXE works on RGB565: r5' = (r5 + (30>>3)) >> 1, g6' = (g6 + (25>>2)) >> 1,
+// b5' = (b5 + (18>>3)) >> 1.
+static void blendDarken(Graphics::ManagedSurface &surface, const Common::Rect &rect) {
+	const Graphics::PixelFormat &fmt = surface.format;
+	assert(fmt.bytesPerPixel == 4);
+
+	for (int y = rect.top; y < rect.bottom; y++) {
+		if (y < 0 || y >= surface.h)
+			continue;
+		byte *row = (byte *)surface.getBasePtr(0, y);
+		for (int x = rect.left; x < rect.right; x++) {
+			if (x < 0 || x >= surface.w)
+				continue;
+			const uint32 pixel = READ_LE_UINT32(row + x * 4);
+			uint8 r, g, b;
+			fmt.colorToRGB(pixel, r, g, b);
+			r = (uint8)((((r >> 3) + (30 >> 3)) >> 1) << 3);
+			g = (uint8)((((g >> 2) + (25 >> 2)) >> 1) << 2);
+			b = (uint8)((((b >> 3) + (18 >> 3)) >> 1) << 3);
+			WRITE_LE_UINT32(row + x * 4, fmt.RGBToColor(r, g, b));
+		}
+	}
+}
+
+// Visual clue variables, in EGYPTE.DEF order right after "IndiceVisuel"
+// (the EXE walks them by index, 0x808c05/0x808c2c). The eye scene opened on
+// click is "ALL\" + the suffix embedded in the name (EXE string table
+// 0x435738: IndiceVisuel01S03CART -> ALL\S03CART; 11..16 -> ALL\RIEN).
+static const char *const kClueVars[16] = {
+	"IndiceVisuel01S03CART", "IndiceVisuel02S06DJED",  "IndiceVisuel03S06TIT",
+	"IndiceVisuel04S08DJAT", "IndiceVisuel05S40TRUIE", "IndiceVisuel06S44PTAH",
+	"IndiceVisuel07D63CHEV", "IndiceVisuel08A21HERI",  "IndiceVisuel09N03CHAT",
+	"IndiceVisuel10N07SENET", "IndiceVisuel11", "IndiceVisuel12",
+	"IndiceVisuel13", "IndiceVisuel14", "IndiceVisuel15", "IndiceVisuel16"
+};
+
 } // End of anonymous namespace
 
 // ----------------------------------------------------------------------------
@@ -180,9 +236,9 @@ bool Egypt_Toolbar::display(const Graphics::Surface *original) {
 	if (_engine->_spriteLoader.interfaceSpriteCount() <= (uint)kSpriteOptions)
 		return false;
 
-	// EXE 0x808683: FlagVisite controls text label rendering (!=0 -> labels shown in visit mode).
-	// EXE 0x808529: FlagVisite!=0 -> kEgyptCursorVisit when hovering a named slot.
-	// The sprite layout (0x8089d0) is the same in both modes; only content/cursor/labels differ.
+	// FlagVisite drives the visit cursor on site slots (EXE 0x8085b7 via the
+	// zone hover state machine 0x808080) and empties the story-specific
+	// content; the sprite layout (0x8089d0) is the same in both modes.
 	const bool inVisitMode = (_engine->getScriptVariableValue("FlagVisite") != 0);
 
 	// Working surfaces: 640 wide, kToolbarH (48) tall
@@ -193,7 +249,9 @@ bool Egypt_Toolbar::display(const Graphics::Surface *original) {
 	if (original && original->w >= 640 && original->h >= 480) {
 		const Common::Rect srcRect(0, original->h - kToolbarH, 640, original->h);
 		bgSurface.copyRectToSurface(*original, 0, 0, srcRect);
-		_engine->makeTranslucent(*bgSurface.surfacePtr(), bgSurface.rawSurface());
+		// EXE 0x8089c5: the strip is darkened by averaging each pixel with
+		// {30, 25, 18} (0x817680), not by halving the channels
+		blendDarken(bgSurface, Common::Rect(0, 0, 640, kToolbarH));
 	}
 
 	// Toolbar top: y=432 on a 480-pixel screen (= 480 - 48)
@@ -263,25 +321,31 @@ bool Egypt_Toolbar::display(const Graphics::Surface *original) {
 
 			blitSpr(kSpriteRight, kXRight, kYButtons, position);
 
-			// Visit mode: draw a tooltip label above the hovered slot (EXE 0x808683).
-			// Only the first 6 slots have a mapped site (F1-F6 destinations).
-			// Text style from EXE 0x80974c/0x80976b: toolbar font slot 10
-			// (FONT11.CRF), black shadow pass then white pass, no bubble.
-			// TODO Phase D: confirm the exact label position from 0x8096xx.
-			if (position == 0 && inVisitMode && hoveredSlot >= 0 && hoveredSlot < 6) {
-				Egypt_FontManager &fm = _engine->_fontManager;
-				fm.setCurrentFont(Egypt_FontManager::kSlotToolbar);
-				const Common::String label(kLevelStartScenes[hoveredSlot]);
-				const int textW = (int)fm.getStrWidth(label);
-				const int fontH = fm.getFontHeight();
-				// Centre above the slot; clamp to toolbar bounds
-				const int slotCX = kSlotX0 + hoveredSlot * kSlotStep + 15;
-				const int textX  = CLIP<int>(slotCX - textW / 2, 2, 638 - textW);
-				const int textY  = CLIP<int>(kYSlot - fontH - 2, 1, kToolbarH - fontH - 1);
-				fm.setForeColor(dest.format.RGBToColor(0, 0, 0));
-				fm.displayStr(dest, textX + 1, textY + 1, label);
-				fm.setForeColor(dest.format.RGBToColor(255, 255, 255));
-				fm.displayStr(dest, textX, textY, label);
+			// Hovered slot label (EXE 0x808df2..0x808e97): with an empty
+			// hand, the hovered slot's object name is drawn once, in white,
+			// font 10 at (1, 433), connected to the slot by an orange line
+			// at y=437 (from x=nameWidth+4 to slotX+15, guard 0x808e30) and
+			// a 4 px vertical tick at (slotX+14, 438..441). Strip offsets
+			// below = screen y - 432.
+			if (position == 0 && hoveredSlot >= 0 && !inVisitMode &&
+			    _engine->getScriptVariableValue("main") == 0) {
+				const int slotId = _engine->getScriptVariableValue(
+				    Common::String::format("inventaire%d", hoveredSlot));
+				if (slotId > 0 && (uint)slotId < _engine->_objectNames.size() &&
+				    !_engine->_objectNames[slotId].empty()) {
+					Egypt_FontManager &fm = _engine->_fontManager;
+					fm.setCurrentFont(Egypt_FontManager::kSlotToolbar);
+					const Common::String &label = _engine->_objectNames[slotId];
+					const int textW = (int)fm.getStrWidth(label);
+					const int slotX = kSlotX0 + hoveredSlot * kSlotStep;
+					const uint32 orange = dest.format.RGBToColor(224, 112, 0);
+					if (textW + 4 < slotX + 15) {
+						dest.hLine(textW + 4, 5, slotX + 14, orange);
+						dest.vLine(slotX + 14, 6, 9, orange);
+					}
+					fm.setForeColor(dest.format.RGBToColor(255, 255, 255));
+					fm.displayStr(dest, 1, 1, label);
+				}
 			}
 		}
 
@@ -310,12 +374,114 @@ bool Egypt_Toolbar::display(const Graphics::Surface *original) {
 	int  lastHoveredSlot = -2; // sentinel to force cursor initialisation
 	bool eyeWarpQueued   = false;
 
+	// Visual clue list state (EXE flag 0x4c207c; geometry from
+	// 0x808f6c..0x809021: box top-left (630-maxW, 429-16n), size
+	// (maxW+10) x (16n+4), rows at (636-maxW, 432-16*(n-i)) font 10)
+	struct ClueEntry { Common::String name; Common::String target; };
+	Common::Array<ClueEntry> clueEntries;
+	bool clueListOpen = false;
+	int  clueMaxW = 0;
+
+	// Repaints the scene rows hidden by the clue list (the box floats above
+	// the toolbar strip; drawFrame() repaints the strip itself)
+	auto restoreClueArea = [&]() {
+		if (!original || clueEntries.empty())
+			return;
+		const int boxX = 630 - clueMaxW;
+		const int boxY = 429 - 16 * (int)clueEntries.size();
+		g_system->copyRectToScreen((const byte *)original->getBasePtr(boxX, boxY),
+		                           original->pitch, boxX, boxY,
+		                           clueMaxW + 10, screenY - boxY);
+	};
+
 	while (!_engine->shouldAbort() && selectedScene < 0 && !eyeWarpQueued) {
 		_engine->pollEvents();
 
 		if (_engine->getCurrentMouseButton() == 2) {
 			_engine->waitMouseRelease();
 			break;
+		}
+
+		// --- Visual clue list (EXE 0x808bf6: while the flag is set, the
+		// list replaces every other toolbar interaction) ---
+		if (clueListOpen) {
+			const int count = (int)clueEntries.size();
+			const int listX = 636 - clueMaxW;      // rows x = 640-(maxW+4)
+			const Common::Point mouse = _engine->getMousePos();
+
+			int hoveredRow = -1;
+			for (int i = 0; i < count; i++) {
+				// Row hit rect (EXE 0x808fe6): w = maxW+4, h = 15
+				const int rowY = 432 - 16 * (count - i);
+				if (Common::Rect(listX, rowY, listX + clueMaxW + 4,
+				                 rowY + 15).contains(mouse)) {
+					hoveredRow = i;
+					break;
+				}
+			}
+
+			// EXE 0x8090cc..0x809100: the list closes as soon as the mouse
+			// leaves its area (h spans 16*(count+3) from the first row)
+			const int areaY = 432 - 16 * count;
+			bool closeList = !Common::Rect(listX, areaY, listX + clueMaxW + 4,
+			                               areaY + 16 * (count + 3)).contains(mouse);
+
+			if (_engine->getDragStatus() == kDragStatus_Finished) {
+				if (hoveredRow >= 0 && !clueEntries[hoveredRow].target.empty()) {
+					// EXE 0x80904c..0x809098: warp to the clue's eye scene,
+					// with a return scene like the eye button warps
+					_engine->_pendingReturnScene = _engine->_currentScene.name;
+					_engine->_pendingWarpTarget  = clueEntries[hoveredRow].target;
+					eyeWarpQueued = true;
+					goto dismissToolbar; // dismiss path restores the area
+				}
+				closeList = true; // click outside a row (EXE 0x809105)
+			}
+
+			// Draw the darkened box and the rows (white, hovered orange)
+			const int boxX = 630 - clueMaxW;
+			const int boxY = 429 - 16 * count;
+			const int boxW = clueMaxW + 10;  // right edge = 640
+			const int boxH = 16 * count + 4; // bottom edge = 433
+			Graphics::ManagedSurface listSurf(boxW, boxH, g_system->getScreenFormat());
+			for (int row = 0; row < boxH; row++) {
+				const int screenRow = boxY + row;
+				if (screenRow < screenY) {
+					if (original)
+						listSurf.copyRectToSurface(*original, 0, row,
+						    Common::Rect(boxX, screenRow, boxX + boxW, screenRow + 1));
+				} else {
+					// bottom rows overlap the toolbar strip
+					listSurf.copyRectToSurface(dest.rawSurface(), 0, row,
+					    Common::Rect(boxX, screenRow - screenY,
+					                 boxX + boxW, screenRow - screenY + 1));
+				}
+			}
+			blendDarken(listSurf, Common::Rect(0, 0, boxW, boxH));
+
+			Egypt_FontManager &fm = _engine->_fontManager;
+			fm.setCurrentFont(Egypt_FontManager::kSlotToolbar);
+			for (int i = 0; i < count; i++) {
+				const int rowY = 432 - 16 * (count - i);
+				fm.setForeColor(i == hoveredRow
+				    ? listSurf.format.RGBToColor(224, 112, 0)
+				    : listSurf.format.RGBToColor(255, 255, 255));
+				fm.displayStr(listSurf, listX - boxX, rowY - boxY, clueEntries[i].name);
+			}
+
+			drawFrame(0);
+			g_system->copyRectToScreen(listSurf.getPixels(), listSurf.pitch,
+			                           boxX, boxY, boxW, boxH);
+			g_system->updateScreen();
+
+			if (closeList) {
+				clueListOpen = false;
+				restoreClueArea();
+				drawFrame(0);
+			}
+
+			g_system->delayMillis(10);
+			continue;
 		}
 
 		// Key handling.
@@ -370,9 +536,34 @@ bool Egypt_Toolbar::display(const Graphics::Surface *original) {
 				goto dismissToolbar;
 			}
 			if (kRectRight.contains(mouse)) {
-				// Documentation button - not yet implemented.
-				warning("EGYPT_TOOLBAR: documentary space button clicked - not implemented yet");
-				goto dismissToolbar;
+				// Visual clue list button (EXE 0x809131); requires an empty
+				// hand (0x809152..0x80915f checks main == 0). With no clue
+				// collected nothing shows (EXE 0x808cbc drops the flag).
+				if (!inVisitMode && original &&
+				    _engine->getScriptVariableValue("main") == 0) {
+					clueEntries.clear();
+					clueMaxW = 0;
+					Egypt_FontManager &fm = _engine->_fontManager;
+					fm.setCurrentFont(Egypt_FontManager::kSlotToolbar);
+					for (uint i = 0; i < ARRAYSIZE(kClueVars); i++) {
+						if (_engine->getScriptVariableValue(kClueVars[i]) == 0)
+							continue;
+						ClueEntry entry;
+						// Name = i-th "message" line of EGYPTE.DEF (0x4cab88)
+						entry.name = (i < _engine->_orderedMessages.size())
+						    ? _engine->_orderedMessages[i]
+						    : Common::String(kClueVars[i]);
+						// Eye scene = "ALL/" + suffix after "IndiceVisuelNN"
+						// (EXE table 0x435738); none for clues 11..16
+						const char *suffix = kClueVars[i] + 14;
+						if (*suffix)
+							entry.target = Common::String("ALL/") + suffix;
+						clueMaxW = MAX<int>(clueMaxW, (int)fm.getStrWidth(entry.name));
+						clueEntries.push_back(entry);
+					}
+					clueListOpen = !clueEntries.empty();
+				}
+				// unlike the other buttons this one keeps the toolbar open
 			}
 
 			for (int i = 0; i < kSlotCount; i++) {
@@ -460,6 +651,12 @@ dismissToolbar:
 
 	if (_engine->shouldAbort())
 		return false;
+
+	// If the clue list was open, repaint the scene rows it covered
+	if (clueListOpen) {
+		clueListOpen = false;
+		restoreClueArea();
+	}
 
 	// --- Slide out (position 0 -> kToolbarH), step=4 ---
 	for (int pos = 4; pos <= kToolbarH; pos += 4) {

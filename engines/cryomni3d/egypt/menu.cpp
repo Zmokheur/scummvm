@@ -29,7 +29,6 @@
 #include "common/textconsole.h"
 
 #include "graphics/font.h"
-#include "graphics/fontman.h"
 #include "graphics/managed_surface.h"
 
 
@@ -213,6 +212,7 @@ bool CryOmni3DEngine_Egypt::loadMessageLabels() {
 		return true;
 
 	_messageLabels.clear();
+	_orderedMessages.clear();
 
 	Common::File file;
 	if (!file.open(Common::Path("REF/FR/EGYPTE.DEF"))) {
@@ -231,6 +231,10 @@ bool CryOmni3DEngine_Egypt::loadMessageLabels() {
 		payload.trim();
 		if (payload.empty())
 			continue;
+
+		// Keep every message in file order (EXE pointer array 0x4cab88);
+		// the toolbar clue list uses entries 0..15 (EXE 0x808c3c).
+		_orderedMessages.push_back(payload);
 
 		int separatorPos = payload.findFirstOf(" \t");
 		if (separatorPos < 0)
@@ -287,33 +291,6 @@ Common::String CryOmni3DEngine_Egypt::getHoverTextForZone(const EgyptZone *zone)
 		return resolveMessageLabel(zone->label);
 
 	return Common::String();
-}
-
-// Kept for the documentation placeholder screen; converted to the original
-// layout in the Phase C documentation rewrite.
-void CryOmni3DEngine_Egypt::drawSimpleScreen(const Common::String &title, const Common::Array<Common::String> &lines,
-                                             int selectedLine, const Graphics::ManagedSurface *background) const {
-	Graphics::ManagedSurface surface(kScreenWidth, kScreenHeight, g_system->getScreenFormat());
-	if (background)
-		surface.blitFrom(*background);
-	else
-		surface.clear(surface.format.RGBToColor(0, 0, 0));
-
-	const uint32 textColor = surface.format.RGBToColor(255, 255, 255);
-	const uint32 highlightColor = surface.format.RGBToColor(224, 112, 0);
-
-	const Graphics::Font *bodyFont = FontMan.getFontByUsage(Graphics::FontManager::kGUIFont);
-	if (bodyFont) {
-		bodyFont->drawString(&surface, title, 248, 236, 320, highlightColor);
-		int y = 276;
-		for (uint i = 0; i < lines.size(); ++i, y += 15) {
-			const uint32 color = ((int)i == selectedLine) ? highlightColor : textColor;
-			bodyFont->drawString(&surface, lines[i], 248, y, 320, color);
-		}
-	}
-
-	g_system->copyRectToScreen(surface.getPixels(), surface.pitch, 0, 0, surface.w, surface.h);
-	g_system->updateScreen();
 }
 
 // Read back the description of one save slot (first kSaveDescriptionLen

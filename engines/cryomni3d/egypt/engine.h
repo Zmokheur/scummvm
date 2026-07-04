@@ -141,8 +141,6 @@ private:
 	Common::String startVisitMode();
 	Common::String startDebugLevel(int level, const Common::String &scene);
 	void playStartupLogoIfPresent();
-	void drawSimpleScreen(const Common::String &title, const Common::Array<Common::String> &lines,
-	                      int selectedLine = -1, const Graphics::ManagedSurface *background = nullptr) const;
 	// Load/save list screen (EXE 0x80fe40); returns a 0-based slot or -1
 	int runSaveListScreen(bool saveMode, const Graphics::ManagedSurface *background);
 	Common::String getSaveDescription(int slot) const;
@@ -243,6 +241,14 @@ private:
 	bool _menuLabelsLoaded = false;
 	Common::HashMap<Common::String, EgyptMessageEntry, Common::IgnoreCase_Hash, Common::IgnoreCase_EqualTo> _messageLabels;
 	bool _messageLabelsLoaded = false;
+	// Object display names in EGYPTE.DEF declaration order (EXE table
+	// 0x4d1278, stride 40, filled by the DEF parser 0x81499e). The index is
+	// the object id used by inventory slot values and icon sprites (+0x92).
+	Common::Array<Common::String> _objectNames;
+	// Every "message" line of EGYPTE.DEF in file order (EXE pointer array
+	// 0x4cab88); entries 0..15 are the visual clue names shown by the
+	// toolbar clue list (EXE 0x808c3c reads 0x4cab88[i]).
+	Common::Array<Common::String> _orderedMessages;
 	uint _lastHoveredZoneId;
 	Common::Array<EgyptSceneAsset> _currentSceneAssets;
 	uint32 _scriptTimerStartMs = 0;

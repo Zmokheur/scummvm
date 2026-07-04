@@ -1181,10 +1181,6 @@ int Egypt_Documentation::runAlphabeticalIndex(const Graphics::ManagedSurface &ba
 	Graphics::ManagedSurface rs(kScreenWidth, kScreenHeight, g_system->getScreenFormat());
 	const uint32 white  = rs.format.RGBToColor(255, 255, 255);
 	const uint32 orange = rs.format.RGBToColor(224, 112, 0);
-	// Backing panel 0x817680 with bevel params at VA 0x4352fc (blue tones);
-	// approximated as a dark blue box until those params are decoded
-	const uint32 panelFill  = rs.format.RGBToColor(0, 0, 64);
-	const uint32 panelFrame = rs.format.RGBToColor(0, 0, 160);
 
 	_engine->clearKeys();
 	_engine->waitMouseRelease();
@@ -1200,12 +1196,26 @@ int Egypt_Documentation::runAlphabeticalIndex(const Graphics::ManagedSurface &ba
 			--textRows;
 
 		rs.blitFrom(background);
-		// Panel (EXE: x=634-maxW, y=427-16*visible, w=maxW+6, h=16*visible+4)
+		// Panel (EXE: x=634-maxW, y=427-16*visible, w=maxW+6, h=16*visible+4),
+		// darkened with 0x817680: each pixel averaged 50/50 with the tint
+		// {30, 25, 18} (params at VA 0x4352fc/0x435300/0x435304), the same
+		// blend as the toolbar background. RGB565 math: chan5' =
+		// (chan5 + (tint >> 3)) >> 1 (green on 6 bits uses >> 2).
 		Common::Rect panel(kScreenWidth - 6 - (int)maxWidth, topY - 3,
 		                   kScreenWidth, topY + visible * kAlphaRowH + 1);
 		panel.clip(Common::Rect(0, 0, rs.w, rs.h));
-		rs.fillRect(panel, panelFill);
-		rs.frameRect(panel, panelFrame);
+		for (int py = panel.top; py < panel.bottom; py++) {
+			byte *rowPtr = (byte *)rs.getBasePtr(0, py);
+			for (int px = panel.left; px < panel.right; px++) {
+				const uint32 pixel = READ_LE_UINT32(rowPtr + px * 4);
+				uint8 r, g, b;
+				rs.format.colorToRGB(pixel, r, g, b);
+				r = (uint8)((((r >> 3) + (30 >> 3)) >> 1) << 3);
+				g = (uint8)((((g >> 2) + (25 >> 2)) >> 1) << 2);
+				b = (uint8)((((b >> 3) + (18 >> 3)) >> 1) << 3);
+				WRITE_LE_UINT32(rowPtr + px * 4, rs.format.RGBToColor(r, g, b));
+			}
+		}
 
 		bool hoverDotsTop = false, hoverDotsBottom = false;
 		int hoveredRow = -1;

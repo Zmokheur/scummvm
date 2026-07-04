@@ -206,6 +206,7 @@ bool CryOmni3DEngine_Egypt::loadSymbolDefinitions(const Common::Path &filename) 
 	}
 
 	_scriptConstants.clear();
+	_objectNames.clear();
 
 	while (!file.eos()) {
 		Common::String line = file.readLine();
@@ -223,6 +224,18 @@ bool CryOmni3DEngine_Egypt::loadSymbolDefinitions(const Common::Path &filename) 
 			_scriptConstants[Common::String(name)] = value;
 		} else if (scumm_stricmp(kind, "objet") == 0) {
 			_scriptConstants[Common::String("Objet") + name] = value;
+
+			// Display name between quotes (EXE parser 0x81499e stores it in
+			// the object name table 0x4d1278; index = declaration order =
+			// object id). Push even when absent to keep indices aligned.
+			Common::String display;
+			uint32 quoteStart = line.find('"');
+			if (quoteStart != Common::String::npos) {
+				uint32 quoteEnd = line.find('"', quoteStart + 1);
+				if (quoteEnd != Common::String::npos && quoteEnd > quoteStart)
+					display = line.substr(quoteStart + 1, quoteEnd - quoteStart - 1);
+			}
+			_objectNames.push_back(display);
 		} else {
 			continue;
 		}
