@@ -22,6 +22,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "common/config-manager.h"
 #include "common/debug.h"
 #include "common/file.h"
 #include "common/savefile.h"
@@ -416,6 +417,187 @@ int CryOmni3DEngine_Egypt::runSaveListScreen(bool saveMode, const Graphics::Mana
 	return -1;
 }
 
+// Options screen - EXE 0x810400 (dispatcher on state 0x4c28a8).
+// Five text rows drawn over a fresh SPRITE/ACC_FR.TGA load (the EXE reloads
+// the splash, it does NOT snapshot the game screen). Each non-Retour row
+// cycles a discrete value via the shared helper 0x4102f0(descriptor, N).
+// Row layout (reliable state-counts from the disassembly; label groups from
+// EGYPTE.DEF msg 503-521, see devtools-egypt/menu_reverse_notes.md):
+//   y=306  Omni3D speed   5 states (msg 508-512) - cosmetic
+//   y=336  Affichage      2 states (msg 503-504) - cosmetic
+//   y=366  Musique Oui/Non 2 states (msg 518-519) - drives audio (mute flag)
+//   y=396  Sous-titres    2 states (msg 513-514) - drives subtitles
+//   y=456  Retour         (msg 521) - persists settings and exits
+// Egypt has NO volume slider (the EXE's 16-segment slider path is dead code).
+// Only Musique and Sous-titres map to real ScummVM settings; Omni3D-speed and
+// Affichage are cosmetic, persisted to engine-specific ConfMan keys the same
+// way the EXE writes GAME\EGYPTE.CFG on Retour.
+void CryOmni3DEngine_Egypt::runOptionsScreen() {
+	loadMessageLabels(); // option label text lives in EGYPTE.DEF
+
+	// Collect the option label groups from the ordered DEF message list by
+	// ASCII-safe prefix. _orderedMessages preserves DEF file order, so each
+	// group's entries stay in their original (accented, Latin-1) form and in
+	// the correct cycle order.
+	Common::Array<Common::String> omni, affichage, sousTitres, musique;
+	Common::String retour = "Retour";
+	for (uint i = 0; i < _orderedMessages.size(); ++i) {
+		const Common::String &m = _orderedMessages[i];
+		if (m.hasPrefix("Omni3D"))
+			omni.push_back(m);
+		else if (m.hasPrefix("Affichage:"))
+			affichage.push_back(m);
+		else if (m.hasPrefix("Sous-titres:"))
+			sousTitres.push_back(m);
+		else if (m.hasPrefix("Musique:"))
+			musique.push_back(m);
+		else if (m == "Retour")
+			retour = m;
+	}
+	// Fallbacks if the DEF is unavailable (keeps the screen usable; ASCII only)
+	if (omni.empty()) {
+		omni.push_back("Omni3D : Normal");
+		omni.push_back("Omni3D : Rapide");
+		omni.push_back("Omni3D : Tres rapide");
+		omni.push_back("Omni3D : Lent");
+		omni.push_back("Omni3D : Tres lent");
+	}
+	if (affichage.empty()) {
+		affichage.push_back("Affichage: Normal");
+		affichage.push_back("Affichage: Rapide");
+	}
+	if (musique.empty()) {
+		musique.push_back("Musique: Oui");
+		musique.push_back("Musique: Non");
+	}
+	if (sousTitres.empty()) {
+		sousTitres.push_back("Sous-titres: Oui");
+		sousTitres.push_back("Sous-titres: Non");
+	}
+
+	enum OptRowKind { kRowOmni, kRowAffichage, kRowMusique, kRowSousTitres, kRowRetour };
+	struct OptRow { int y; OptRowKind kind; };
+	static const OptRow rows[] = {
+		{ 306, kRowOmni },
+		{ 336, kRowAffichage },
+		{ 366, kRowMusique },
+		{ 396, kRowSousTitres },
+		{ 456, kRowRetour },
+	};
+
+	// Current index per row. Music/subtitles reflect ConfMan; Omni3D/Affichage
+	// are session state persisted under engine-specific keys.
+	int omniIdx = ConfMan.hasKey("egypt_omni3d_speed") ? ConfMan.getInt("egypt_omni3d_speed") : 0;
+	if (omniIdx < 0 || omniIdx >= (int)omni.size())
+		omniIdx = 0;
+	int affIdx = ConfMan.hasKey("egypt_display_mode") ? ConfMan.getInt("egypt_display_mode") : 0;
+	if (affIdx < 0 || affIdx >= (int)affichage.size())
+		affIdx = 0;
+	const bool musicMuted = ConfMan.getBool("music_mute") ||
+	    (ConfMan.hasKey("mute") && ConfMan.getBool("mute"));
+	int musIdx = musicMuted ? 1 : 0;  // 0 = Oui, 1 = Non
+	const bool subsOn = !ConfMan.hasKey("subtitles") || ConfMan.getBool("subtitles");
+	int subIdx = subsOn ? 0 : 1;      // 0 = Oui, 1 = Non
+
+	Graphics::ManagedSurface background;
+	const bool hasBackground = loadTgaImage(getFilePath(kFileTypeSpriteImage, "ACC_FR.TGA"), background, true);
+	if (!hasBackground)
+		warning("Egypt: options background SPRITE/ACC_FR.TGA not found");
+
+	Graphics::ManagedSurface surface(kScreenWidth, kScreenHeight, g_system->getScreenFormat());
+	Egypt_FontManager &fm = _fontManager;
+	const uint32 white  = surface.format.RGBToColor(255, 255, 255); // 0x4d9974
+	const uint32 orange = surface.format.RGBToColor(224, 112, 0);   // 0x4d6070
+
+	showMouse(true);
+	clearKeys();
+	waitMouseRelease();
+
+	while (!shouldAbort()) {
+		if (hasBackground)
+			surface.blitFrom(background);
+		else
+			surface.clear(surface.format.RGBToColor(0, 0, 0));
+
+		const Common::Point mouse = getMousePos();
+		int hoveredRow = -1;
+		for (int i = 0; i < ARRAYSIZE(rows); ++i) {
+			// Hit rect matches the menu family (x=224, w=160, h=16; struct +0x0c)
+			if (Common::Rect(kMenuBulletX, rows[i].y, kMenuBulletX + kMenuHitW,
+			                 rows[i].y + kMenuHitH).contains(mouse))
+				hoveredRow = i;
+		}
+
+		fm.setCurrentFont(Egypt_FontManager::kSlotMenu); // font 2 = FONT03.CRF
+
+		for (int i = 0; i < ARRAYSIZE(rows); ++i) {
+			Common::String label;
+			switch (rows[i].kind) {
+			case kRowOmni:       label = omni[omniIdx];            break;
+			case kRowAffichage:  label = affichage[affIdx];        break;
+			case kRowMusique:    label = musique[musIdx];          break;
+			case kRowSousTitres: label = sousTitres[subIdx];       break;
+			case kRowRetour:     label = retour;                   break;
+			}
+			fm.setForeColor(i == hoveredRow ? orange : white);
+			fm.displayStr(surface, kMenuTextX, rows[i].y, label);
+		}
+
+		g_system->copyRectToScreen(surface.getPixels(), surface.pitch, 0, 0, surface.w, surface.h);
+		g_system->updateScreen();
+		g_system->delayMillis(10);
+		pollEvents();
+
+		bool exitScreen = false;
+		if (getCurrentMouseButton() == 1) {
+			waitMouseRelease();
+			if (hoveredRow >= 0) {
+				switch (rows[hoveredRow].kind) {
+				case kRowOmni:
+					omniIdx = (omniIdx + 1) % (int)omni.size();
+					ConfMan.setInt("egypt_omni3d_speed", omniIdx);
+					break;
+				case kRowAffichage:
+					affIdx = (affIdx + 1) % (int)affichage.size();
+					ConfMan.setInt("egypt_display_mode", affIdx);
+					break;
+				case kRowMusique:
+					musIdx ^= 1;
+					// EXE row y=366 sets the mute flag 0x4366b4; Egypt's HNM
+					// audio is kMusicSoundType, so music_mute mutes it and
+					// syncSoundSettings() applies it live.
+					ConfMan.setBool("music_mute", musIdx == 1);
+					syncSoundSettings();
+					break;
+				case kRowSousTitres:
+					subIdx ^= 1;
+					ConfMan.setBool("subtitles", subIdx == 0);
+					break;
+				case kRowRetour:
+					exitScreen = true;
+					break;
+				}
+			}
+		}
+
+		if (getNextKey().keycode == Common::KEYCODE_ESCAPE)
+			exitScreen = true; // EXE 0x810720 teardown, back to the menu
+
+		if (exitScreen)
+			break;
+	}
+
+	// Retour/ESC persists the settings (EXE writes GAME\EGYPTE.CFG on teardown)
+	ConfMan.flushToDisk();
+	clearKeys();
+	waitMouseRelease();
+}
+
+uint CryOmni3DEngine_Egypt::displayOptions() {
+	runOptionsScreen();
+	return 0;
+}
+
 void CryOmni3DEngine_Egypt::playStartupLogoIfPresent() {
 	// EXE 0x4075fe: hardcoded startup sequence "logo" then "r1".
 	// R1.HNS is HNM6 640x480 with embedded CRYO_APC audio in AA chunk (22050 Hz stereo).
@@ -519,9 +701,9 @@ CryOmni3DEngine_Egypt::EgyptStartupMode CryOmni3DEngine_Egypt::showMainMenu() {
 				showMouse(false);
 				return EgyptStartupMode::kDocumentation;
 			case kLabelOptions:
-				// EXE state 6 -> options screen 0x810400 (display modes,
-				// music...). Not ported: ScummVM options cover this.
-				debugC(kDebugVariable, "EGYPT_MENU: options entry not ported (EXE 0x810400)");
+				// EXE state 6 -> options screen 0x810400 (Omni3D speed,
+				// display mode, music, subtitles - no volume slider).
+				runOptionsScreen();
 				break;
 			case kLabelQuit:
 				showMouse(false);

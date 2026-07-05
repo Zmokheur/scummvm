@@ -101,7 +101,7 @@ public:
 	Common::String getSaveStateName(int slot) const override;
 	bool hasPlaceDocumentation() override { return false; }
 	bool displayPlaceDocumentation() override { return false; }
-	uint displayOptions() override { return 0; }
+	uint displayOptions() override; // EXE 0x810400 - runs runOptionsScreen()
 	void makeTranslucent(Graphics::Surface &dst, const Graphics::Surface &src) const override;
 	void setupPalette(const byte *colors, uint start, uint num) override {}
 
@@ -143,6 +143,8 @@ private:
 	void playStartupLogoIfPresent();
 	// Load/save list screen (EXE 0x80fe40); returns a 0-based slot or -1
 	int runSaveListScreen(bool saveMode, const Graphics::ManagedSurface *background);
+	// Options screen (EXE 0x810400): display/Omni3D/music/subtitles rows + Retour
+	void runOptionsScreen();
 	Common::String getSaveDescription(int slot) const;
 	bool loadMenuLabels();
 	bool loadMessageLabels();
