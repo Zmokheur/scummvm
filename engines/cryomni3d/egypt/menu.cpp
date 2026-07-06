@@ -112,6 +112,11 @@ const int kListFirstY      = 276;  // 0x810105: add edx,0x114
 const int kListStepY       = 15;   // 0x8101d3: add esi,0xf
 const int kListDotsBottomY = 426;  // 0x80fffc: push 0x1aa
 const int kListCancelY     = 456;  // 0x810094: push 0x1c8
+// Inline save-name editor buttons at y=456 (EXE 0x810945/0x810985 draw calls):
+// OK/Confirm (label 0x4cabe4) at x=168, Cancel (label 0x4cabe0) at x=328.
+const int kEditOkX         = 168;  // 0x810985
+const int kEditCancelX     = 328;  // 0x810945
+const int kSaveNameMaxLen  = 19;   // 0x810ae0 gate cmp (len+1),0x14 (20-byte record)
 const int kListHitW        = 128;  // 0x80fee1: push 0x80
 const int kListRowHitH     = 10;   // 0x8100ee: push 0xa
 const int kListDotsHitH    = 14;   // 0x80fef9: push 0xe
@@ -310,7 +315,10 @@ Common::String CryOmni3DEngine_Egypt::getSaveDescription(int slot) const {
 }
 
 // Load/save list screen - EXE 0x80fe40.
-// Returns the selected slot (0-based) or -1 on cancel/abort.
+// Load mode: returns the selected slot (0-based) or -1 on cancel/abort.
+// Save mode: opens the inline name editor (EXE 0x8107f0/0x810ae0) on the
+// clicked slot and performs the save in place; always returns -1 (the caller
+// has nothing left to do - there is no overwrite-confirm step in the EXE).
 int CryOmni3DEngine_Egypt::runSaveListScreen(bool saveMode, const Graphics::ManagedSurface *background) {
 	Common::Array<Common::String> descriptions;
 	descriptions.resize(kMaxSaveSlots);
@@ -325,6 +333,11 @@ int CryOmni3DEngine_Egypt::runSaveListScreen(bool saveMode, const Graphics::Mana
 	int scrollOffset = 0;  // EXE global 0x4c288c
 	int dwellTicks = 0;    // EXE tick counter 0x81a7b0: >= 10 hovering "..." scrolls
 
+	// Inline editor state (save mode only). editingSlot is the 0-based slot
+	// currently being renamed, or -1 when navigating the list (EXE 0x4c2888).
+	int editingSlot = -1;
+	Common::String editName;
+
 	const Common::String header = _menuLabels[saveMode ? kLabelSaveGame : kLabelLoadGame];
 	const Common::String dots = "...";  // EXE string VA 0x4350f8
 
@@ -334,17 +347,26 @@ int CryOmni3DEngine_Egypt::runSaveListScreen(bool saveMode, const Graphics::Mana
 		else
 			surface.clear(surface.format.RGBToColor(0, 0, 0));
 
+		const bool editing = editingSlot >= 0;
 		const Common::Point mouse = getMousePos();
-		const bool canScrollUp   = scrollOffset > 0;
-		const bool canScrollDown = scrollOffset + 1 < kMaxSaveSlots; // EXE caps offset at 0x5a
+		const bool canScrollUp   = !editing && scrollOffset > 0;
+		const bool canScrollDown = !editing && scrollOffset + 1 < kMaxSaveSlots; // EXE caps offset at 0x5a
 		const bool hoverDotsTop = canScrollUp &&
 		    Common::Rect(kMenuTextX, kListDotsTopY, kMenuTextX + kListHitW,
 		                 kListDotsTopY + kListDotsHitH).contains(mouse);
 		const bool hoverDotsBottom = canScrollDown &&
 		    Common::Rect(kMenuTextX, kListDotsBottomY, kMenuTextX + kListHitW,
 		                 kListDotsBottomY + kListDotsHitH).contains(mouse);
-		const bool hoverCancel =
+		// Bottom buttons: list mode has a single "Annuler" at x=248; the editor
+		// has OK at x=168 and Cancel at x=328 (EXE 0x810985/0x810945).
+		const bool hoverCancel = !editing &&
 		    Common::Rect(kMenuTextX, kListCancelY, kMenuTextX + kListHitW,
+		                 kListCancelY + kMenuHitH).contains(mouse);
+		const bool hoverEditOk = editing &&
+		    Common::Rect(kEditOkX, kListCancelY, kEditOkX + kListHitW,
+		                 kListCancelY + kMenuHitH).contains(mouse);
+		const bool hoverEditCancel = editing &&
+		    Common::Rect(kEditCancelX, kListCancelY, kEditCancelX + kListHitW,
 		                 kListCancelY + kMenuHitH).contains(mouse);
 
 		fm.setCurrentFont(Egypt_FontManager::kSlotMenu); // font 2 throughout (0x80fe40)
@@ -364,11 +386,18 @@ int CryOmni3DEngine_Egypt::runSaveListScreen(bool saveMode, const Graphics::Mana
 			if (slot >= kMaxSaveSlots)
 				break;
 			const int y = kListFirstY + i * kListStepY;
-			const bool rowHovered =
+			const bool rowHovered = !editing &&
 			    Common::Rect(kMenuTextX, y, kMenuTextX + kListHitW,
 			                 y + kListRowHitH).contains(mouse);
 			if (rowHovered)
 				hoveredRow = slot;
+			if (slot == editingSlot) {
+				// The edited row shows the typed name plus the "_" cursor glyph
+				// (EXE string 0x435af4), highlighted orange.
+				fm.setForeColor(orange);
+				fm.displayStr(surface, kMenuTextX, y, editName + "_");
+				continue;
+			}
 			if (descriptions[slot].empty())
 				continue; // empty rows are blank (EXE skips names with a NUL first byte)
 			fm.setForeColor(rowHovered ? orange : white);
@@ -380,8 +409,15 @@ int CryOmni3DEngine_Egypt::runSaveListScreen(bool saveMode, const Graphics::Mana
 			fm.displayStr(surface, kMenuTextX, kListDotsBottomY, dots);
 		}
 
-		fm.setForeColor(hoverCancel ? orange : white);
-		fm.displayStr(surface, kMenuTextX, kListCancelY, _menuLabels[kLabelCancel]);
+		if (editing) {
+			fm.setForeColor(hoverEditOk ? orange : white);
+			fm.displayStr(surface, kEditOkX, kListCancelY, "OK");
+			fm.setForeColor(hoverEditCancel ? orange : white);
+			fm.displayStr(surface, kEditCancelX, kListCancelY, _menuLabels[kLabelCancel]);
+		} else {
+			fm.setForeColor(hoverCancel ? orange : white);
+			fm.displayStr(surface, kMenuTextX, kListCancelY, _menuLabels[kLabelCancel]);
+		}
 
 		g_system->copyRectToScreen(surface.getPixels(), surface.pitch, 0, 0, surface.w, surface.h);
 		g_system->updateScreen();
@@ -398,14 +434,75 @@ int CryOmni3DEngine_Egypt::runSaveListScreen(bool saveMode, const Graphics::Mana
 			dwellTicks = 0;
 		}
 
+		if (editing) {
+			// --- Inline name editor (EXE input loop 0x810ae0) ---
+			Common::KeyState key;
+			bool commit = false;
+			bool cancel = false;
+			while ((key = getNextKey()).keycode != Common::KEYCODE_INVALID) {
+				if (key.keycode == Common::KEYCODE_ESCAPE) {
+					cancel = true;      // ESC aborts, save file untouched
+				} else if (key.keycode == Common::KEYCODE_RETURN ||
+				           key.keycode == Common::KEYCODE_KP_ENTER) {
+					commit = true;      // Enter commits (empty rejected below)
+				} else if (key.keycode == Common::KEYCODE_BACKSPACE) {
+					if (!editName.empty())
+						editName.deleteLastChar();
+				} else if (key.ascii >= 0x20 && key.ascii <= 0xff &&
+				           (int)editName.size() < kSaveNameMaxLen) {
+					// Printable >= 0x20, capped at 19 chars (EXE charset filter)
+					editName += (char)key.ascii;
+				}
+			}
+
+			if (getCurrentMouseButton() == 1) {
+				waitMouseRelease();
+				if (hoverEditOk)
+					commit = true;      // OK button = Enter
+				else if (hoverEditCancel)
+					cancel = true;
+			}
+
+			if (cancel) {
+				editingSlot = -1;       // back to the list, nothing written
+				editName.clear();
+			} else if (commit && !editName.empty()) {
+				// All-spaces name maps to "?" (EXE string 0x435af8)
+				Common::String finalName = editName;
+				bool allSpaces = true;
+				for (uint c = 0; c < finalName.size(); ++c) {
+					if (finalName[c] != ' ') {
+						allSpaces = false;
+						break;
+					}
+				}
+				if (allSpaces)
+					finalName = "?";
+				saveGameToSlot((uint)editingSlot + 1, finalName);
+				return -1;              // saved in place; nothing left for the caller
+			}
+			// commit with an empty name is ignored (cannot confirm blank)
+			continue;
+		}
+
+		// --- List navigation ---
 		if (getCurrentMouseButton() == 1) {
 			waitMouseRelease();
 			if (hoverCancel)
 				return -1;
 			if (hoveredRow >= 0) {
-				// Load mode requires an existing save; save mode accepts
-				// empty rows too (new save at that slot)
-				if (saveMode || !descriptions[hoveredRow].empty())
+				if (saveMode) {
+					// Enter the inline editor: pre-fill with the slot's existing
+					// name (blank for an empty slot), per EXE 0x8107f0.
+					editingSlot = hoveredRow;
+					editName = descriptions[hoveredRow];
+					if ((int)editName.size() > kSaveNameMaxLen)
+						editName = Common::String(editName.c_str(), kSaveNameMaxLen);
+					clearKeys();
+					continue;
+				}
+				// Load mode requires an existing save
+				if (!descriptions[hoveredRow].empty())
 					return hoveredRow;
 			}
 		}
@@ -708,17 +805,11 @@ CryOmni3DEngine_Egypt::EgyptStartupMode CryOmni3DEngine_Egypt::showMainMenu() {
 			case kLabelQuit:
 				showMouse(false);
 				return EgyptStartupMode::kQuit;
-			case kLabelSaveGame: {
-				const int slot = runSaveListScreen(true, hasBackground ? &background : nullptr);
-				if (slot >= 0) {
-					// The EXE opens an inline name editor (0x8107f0); we
-					// store a generated description instead for now.
-					Common::String desc = _savedSceneName.empty()
-					    ? Common::String("Egypte") : _savedSceneName;
-					saveGameToSlot((uint)slot + 1, desc);
-				}
+			case kLabelSaveGame:
+				// The list screen opens the inline name editor (EXE 0x8107f0)
+				// on the clicked slot and performs the save in place.
+				runSaveListScreen(true, hasBackground ? &background : nullptr);
 				break;
-			}
 			case kLabelResume:
 				showMouse(false);
 				return EgyptStartupMode::kResume;
