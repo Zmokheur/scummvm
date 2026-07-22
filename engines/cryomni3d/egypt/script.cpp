@@ -498,14 +498,25 @@ void Egypt_Script::cmdAnimspr(const Common::String &args, Context &ctx) {
 }
 
 void Egypt_Script::cmdFonction(const Common::String &args, Context &ctx) {
-	const int funcNum = atoi(args.c_str());
-	// FADE_IN = 6, FADE_OUT = 7 (constants defined in EGYPTE.DEF)
-	if (funcNum == 6) {
+	// The scripts pass constant *names*, not numbers (e.g. "fonction FADE_OUT",
+	// "fonction JEU_SENET"), so resolve through the DEF constant table rather
+	// than atoi. Values from EGYPTE.DEF: JEU_SENET = 1, FADE_IN = 6, FADE_OUT = 7.
+	const int funcNum = _engine->resolveScriptValue(args);
+	switch (funcNum) {
+	case 5: // SABLIER - Level 6 (Karnak) hourglass time-limit
+		// Pure variable update (like "let"); the following script line
+		// "if FlagSablier=3 aller_warp N" produces any state change.
+		_engine->applySablier();
+		break;
+	case 6:
 		_engine->performScreenFade(false);
-	} else if (funcNum == 7) {
+		break;
+	case 7:
 		_engine->performScreenFade(true);
-	} else {
+		break;
+	default:
 		logUnsupportedCommand("fonction " + args);
+		break;
 	}
 }
 

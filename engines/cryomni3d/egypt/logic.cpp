@@ -458,5 +458,61 @@ void CryOmni3DEngine_Egypt::updateScriptTimer() {
 	_gameVariables[GameVariables::kTimer] = (uint)(elapsed / 10); // hundredths of a second
 }
 
+// EXE "fonction SABLIER" (5), dispatch at 0x8126cc. Every Level 6 (Karnak)
+// scene calls this once per visit, then does "if FlagSablier=3 aller_warp N"
+// to a time's-up branch. FlagSablier states:
+//   0 = not armed (the priest has not left K38 yet)
+//   1 = armed this frame (set by K38.DEF once FlagHorologueK38Parti != 0)
+//   2 = running (real-time countdown, ~327 s)
+//   3 = expired -> the per-scene script warps to the game-over branch
+//   4 = disabled/success (both loot pieces shown)
+// The EXE times this with QueryPerformanceCounter scaled to centiseconds
+// ((counter - base) * 100 / frequency, 0x81a930) against a 0x7fff-cs limit,
+// resetting the base (0x4d1e58) on the 1 -> 2 transition (0x81a9a0).
+void CryOmni3DEngine_Egypt::applySablier() {
+	// Inactive during scene-revisit mode (EXE checks FlagVisite first).
+	if (_gameVariables[GameVariables::kFlagVisite] != 0)
+		return;
+
+	const uint sablier = _gameVariables[GameVariables::kFlagSablier];
+	// Nothing to do before the hourglass is armed or after it has expired.
+	if (sablier == 0 || sablier == 3)
+		return;
+
+	// First call after arming: start counting and reset the real-time base.
+	if (sablier == 1) {
+		_gameVariables[GameVariables::kFlagSablier] = 2;
+		_sablierStartMs = g_system->getMillis();
+	}
+
+	// Success shortcut: both required loot pieces shown -> stop the timer.
+	if (_gameVariables[GameVariables::kFlagNbButinMontre] == 2) {
+		_gameVariables[GameVariables::kFlagSablier] = 4;
+		_gameVariables[GameVariables::kFlagTeleporteK12] = 0;
+		return;
+	}
+
+	// Only state 2 (already running) runs the expiry check; the arming call
+	// (original value 1) just started the clock this frame.
+	if (sablier != 2)
+		return;
+
+	// Defensive: if the base is unset (e.g. a game saved mid-countdown and
+	// reloaded), re-arm instead of instantly expiring the player.
+	if (_sablierStartMs == 0)
+		_sablierStartMs = g_system->getMillis();
+
+	// Elapsed centiseconds, compared against the EXE 0x7fff-cs limit (~327.7 s).
+	// The EXE also draws a 1..11 hourglass level (0x4d1bdc) in the toolbar; the
+	// port does not render that HUD element yet, but the timer still expires.
+	const uint32 elapsedCs = (g_system->getMillis() - _sablierStartMs) / 10;
+	if (elapsedCs >= 0x7fff) {
+		_gameVariables[GameVariables::kFlagMouseVisee] = 0;
+		_gameVariables[GameVariables::kFlagSablier] = 3;
+		_gameVariables[GameVariables::kFlagTeleporteK12] = 1;
+		debugC(kDebugVariable, "Egypt: SABLIER expired (%u cs) -> FlagSablier=3", elapsedCs);
+	}
+}
+
 } // End of namespace Egypt
 } // End of namespace CryOmni3D

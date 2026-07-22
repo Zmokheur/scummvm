@@ -217,6 +217,8 @@ private:
 	void executeHnmSequence(const Common::String &hnmJoined);
 	void resetScriptTimer();
 	void updateScriptTimer();
+	// EXE "fonction SABLIER" (5): the Level 6 (Karnak) hourglass state machine.
+	void applySablier();
 
 	bool _isPlaying = false;
 	Common::String _savedSceneName;
@@ -263,6 +265,10 @@ private:
 	Common::Array<EgyptSceneAsset> _currentSceneAssets;
 	uint32 _scriptTimerStartMs = 0;
 	bool   _sceneHasTimerScript = false;
+	// SABLIER (Level 6 hourglass) real-time base, set when FlagSablier arms
+	// (1 -> 2). Separate from _scriptTimerStartMs, which resets every scene;
+	// the hourglass keeps counting across the whole maze. Mirrors EXE 0x4d1e58.
+	uint32 _sablierStartMs = 0;
 	Graphics::Surface _crossFadeOldScreen;
 	bool _hasCrossFadeOldScreen = false;
 
