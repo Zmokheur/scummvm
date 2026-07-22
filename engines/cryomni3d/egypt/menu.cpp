@@ -746,6 +746,12 @@ CryOmni3DEngine_Egypt::EgyptStartupMode CryOmni3DEngine_Egypt::showMainMenu() {
 		else
 			surface.clear(surface.format.RGBToColor(0, 0, 0));
 
+		// Port-only debug entry: a "Test Senet" row appended below the normal
+		// entries in the startup menu, to launch the Level 5 mini-game directly
+		// without playing through the hippo-plan puzzle (M45PLAN).
+		const bool showTestSenet = !inGameVariant;
+		const int testSenetY = kMenuFirstY + entryCount * kMenuStepY;
+
 		const Common::Point mouse = getMousePos();
 		int hoveredEntry = -1;
 		for (int i = 0; i < entryCount; ++i) {
@@ -754,6 +760,9 @@ CryOmni3DEngine_Egypt::EgyptStartupMode CryOmni3DEngine_Egypt::showMainMenu() {
 			if (Common::Rect(kMenuBulletX, y, kMenuBulletX + kMenuHitW, y + kMenuHitH).contains(mouse))
 				hoveredEntry = i;
 		}
+		const bool hoveredTestSenet = showTestSenet &&
+		    Common::Rect(kMenuBulletX, testSenetY, kMenuBulletX + kMenuHitW,
+		                 testSenetY + kMenuHitH).contains(mouse);
 
 		fm.setCurrentFont(Egypt_FontManager::kSlotMenu); // font 2 = FONT03.CRF
 
@@ -770,10 +779,34 @@ CryOmni3DEngine_Egypt::EgyptStartupMode CryOmni3DEngine_Egypt::showMainMenu() {
 			fm.displayStr(surface, kMenuTextX, y, _menuLabels[entries[i]]);
 		}
 
+		if (showTestSenet) {
+			const int sprId = hoveredTestSenet ? kSpriteBulletHovered : kSpriteBullet;
+			if ((uint)sprId < _spriteLoader.interfaceSpriteCount())
+				blitMenuSprite(_spriteLoader.interfaceSprite(sprId), surface,
+				               kMenuBulletX, testSenetY + kMenuBulletYOffset);
+			fm.setForeColor(hoveredTestSenet ? orange : white);
+			fm.displayStr(surface, kMenuTextX, testSenetY, "Test Senet (debug)");
+		}
+
 		g_system->copyRectToScreen(surface.getPixels(), surface.pitch, 0, 0, surface.w, surface.h);
 		g_system->updateScreen();
 		g_system->delayMillis(10);
 		pollEvents();
+
+		if (getCurrentMouseButton() == 1 && hoveredTestSenet) {
+			waitMouseRelease();
+			// Run the mini-game directly. Level 5 is its normal context; set it
+			// so any level-dependent asset resolution in later phases resolves.
+			_gameVariables[GameVariables::kLevel] = 5;
+			showMouse(false);
+			const int result = _senet.run();
+			debugC(kDebugVariable, "EGYPT_MENU: Test Senet -> result=%d (tmp)", result);
+			showMouse(true);
+			setInterfaceCursor(kEgyptCursorDefault);
+			clearKeys();
+			waitMouseRelease();
+			continue;
+		}
 
 		if (getCurrentMouseButton() == 1 && hoveredEntry >= 0) {
 			waitMouseRelease();

@@ -120,6 +120,16 @@ bool Egypt_Dialog::loadLevelTxt() {
 
 // --- Node lookup ---
 
+bool Egypt_Dialog::getLineText(const Common::String &label, Common::String &out) {
+	if (!_levelLoaded)
+		_levelLoaded = loadLevelTxt();
+	const EgyptDialogNode *node = findNode(label);
+	if (!node)
+		return false;
+	out = node->text;
+	return true;
+}
+
 const EgyptDialogNode *Egypt_Dialog::findNode(const Common::String &label) const {
 	Common::String key = label;
 	key.toLowercase();

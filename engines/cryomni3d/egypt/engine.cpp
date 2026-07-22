@@ -47,6 +47,7 @@ CryOmni3DEngine_Egypt::CryOmni3DEngine_Egypt(OSystem *syst,
 		_documentation(this),
 		_dialog(this),
 		_script(this),
+		_senet(this),
 		_currentContextName("NUIT"),
 		_lastHoveredZoneId(uint(-1)) {
 	_pendingWarp.active = false;

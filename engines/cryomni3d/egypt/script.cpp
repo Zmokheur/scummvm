@@ -503,6 +503,22 @@ void Egypt_Script::cmdFonction(const Common::String &args, Context &ctx) {
 	// than atoi. Values from EGYPTE.DEF: JEU_SENET = 1, FADE_IN = 6, FADE_OUT = 7.
 	const int funcNum = _engine->resolveScriptValue(args);
 	switch (funcNum) {
+	case 1: { // JEU_SENET - Level 5 Senet mini-game (M45PLAN)
+		// The senet call sits inside an endinit block that also queued the
+		// intro dialogue ("dialoguer 3" -> mpa4500). cmdDialoguer only stores a
+		// pending label; the caller runs it after the whole block. Flush it now
+		// so the intro plays before the game, not after (and is not overwritten
+		// by the win/loss dialogue queued later in the same block).
+		if (!_engine->_dialogPendingLabel.empty()) {
+			Common::String intro = _engine->_dialogPendingLabel;
+			_engine->_dialogPendingLabel.clear();
+			_engine->_dialog.run(intro);
+		}
+		const int result = _engine->_senet.run();
+		_engine->setGameVar("tmp", result);
+		ctx.producedState = true;
+		break;
+	}
 	case 2: // RAZ_INVENTAIRE_ENIGME_A17
 	case 3: // INSERT_OBJET_ENIGME_A17
 	case 4: // RAZ_INVENTAIRE

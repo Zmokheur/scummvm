@@ -62,6 +62,12 @@ public:
 	const EgyptInterfaceSprite &interfaceSprite(uint id) const { return _interfaceSprites[id]; }
 	bool setInterfaceCursor(uint spriteId) const;
 
+	// Loads an arbitrary CPx5-wrapped SPR sheet (the [offset, height, width]
+	// table format shared by INTERFAC.SPR) into the caller's array. Used by the
+	// Senet mini-game (SENET.SPR); each entry keeps its own RGB565 surface,
+	// transparency mask and centered hotspot.
+	bool loadSprSheet(const Common::Path &filename, Common::Array<EgyptInterfaceSprite> &out) const;
+
 	// Scene overlay SPR
 	bool loadSceneOverlay(const Common::String &sceneName, int level);
 	bool hasOverlayData() const { return !_sceneOverlayData.empty(); }

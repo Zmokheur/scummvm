@@ -44,6 +44,7 @@ MODULE_OBJS += \
 	egypt/saveload.o \
 	egypt/scene.o \
 	egypt/script.o \
+	egypt/senet.o \
 	egypt/sprite.o \
 	egypt/support/cpx5.o \
 	egypt/support/font_manager.o \

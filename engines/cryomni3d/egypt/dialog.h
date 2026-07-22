@@ -96,6 +96,11 @@ public:
 	// Invalidate the cached Level.txt (called when a new game session starts)
 	void resetLevelCache() { _levelLoaded = false; }
 
+	// Look up the subtitle text for a Level.txt label without running the full
+	// dialogue UI. Used by the Senet mini-game (Phase E) to show its comment
+	// lines. Loads Level.txt on first use; returns false if the label is absent.
+	bool getLineText(const Common::String &label, Common::String &out);
+
 private:
 	bool loadLevelTxt();
 	const EgyptDialogNode *findNode(const Common::String &label) const;

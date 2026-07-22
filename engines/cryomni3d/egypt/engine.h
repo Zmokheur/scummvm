@@ -39,6 +39,7 @@
 #include "cryomni3d/egypt/game_variables.h"
 #include "cryomni3d/egypt/scene.h"
 #include "cryomni3d/egypt/script.h"
+#include "cryomni3d/egypt/senet.h"
 #include "cryomni3d/egypt/sprite.h"
 #include "cryomni3d/egypt/support/font_manager.h"
 #include "cryomni3d/egypt/toolbar.h"
@@ -88,6 +89,7 @@ class CryOmni3DEngine_Egypt : public CryOmni3DEngine {
 	friend class Egypt_Script;
 	friend class Egypt_Documentation;
 	friend class Egypt_Toolbar;
+	friend class Egypt_Senet;
 public:
 	CryOmni3DEngine_Egypt(OSystem *syst, const CryOmni3DGameDescription *gamedesc);
 	~CryOmni3DEngine_Egypt() override;
@@ -245,6 +247,7 @@ private:
 	Egypt_Documentation _documentation;
 	Egypt_Dialog _dialog;
 	Egypt_Script _script;
+	Egypt_Senet _senet;
 	// Zones always active regardless of script variables (e.g. UTILISER_SUR).
 	// Set once by autoActivateZoneclicZones(); each runEndInit resets activeZones
 	// to this baseline before re-running the script (mirrors EXE per-frame model).

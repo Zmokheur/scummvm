@@ -38,11 +38,16 @@ namespace Egypt {
 const Graphics::PixelFormat kEgyptSpriteFormat(2, 5, 6, 5, 0, 11, 5, 0, 0);
 
 bool Egypt_SpriteLoader::loadInterfaceSprites(const Common::Path &filename) {
-	_interfaceSprites.clear();
+	return loadSprSheet(filename, _interfaceSprites);
+}
+
+bool Egypt_SpriteLoader::loadSprSheet(const Common::Path &filename,
+                                      Common::Array<EgyptInterfaceSprite> &out) const {
+	out.clear();
 
 	Common::File file;
 	if (!file.open(filename)) {
-		warning("Egypt: failed to open interface sprite file %s",
+		warning("Egypt: failed to open sprite sheet %s",
 		        filename.toString(Common::Path::kNativeSeparator).c_str());
 		return false;
 	}
@@ -52,18 +57,18 @@ bool Egypt_SpriteLoader::loadInterfaceSprites(const Common::Path &filename) {
 		return false;
 
 	if (decompressed.size() < 4) {
-		warning("Egypt: decompressed interface sprite data is too short");
+		warning("Egypt: decompressed sprite sheet data is too short");
 		return false;
 	}
 
 	const uint32 firstPixelOffset = READ_LE_UINT32(decompressed.data());
 	if (firstPixelOffset == 0 || (firstPixelOffset % 8) != 0 || firstPixelOffset > decompressed.size()) {
-		warning("Egypt: invalid interface sprite table offset 0x%08x", firstPixelOffset);
+		warning("Egypt: invalid sprite sheet table offset 0x%08x", firstPixelOffset);
 		return false;
 	}
 
 	const uint spriteCount = firstPixelOffset / 8;
-	_interfaceSprites.resize(spriteCount);
+	out.resize(spriteCount);
 	for (uint i = 0; i < spriteCount; ++i) {
 		const uint entryOffset = i * 8;
 		const uint32 pixelOffset = READ_LE_UINT32(decompressed.data() + entryOffset);
@@ -75,9 +80,9 @@ bool Egypt_SpriteLoader::loadInterfaceSprites(const Common::Path &filename) {
 		uint32 pixelDataOffset = pixelOffset;
 
 		if (width == 0 || height == 0 || pixelOffset >= decompressed.size()) {
-			warning("Egypt: invalid interface sprite %u offset=0x%08x size=%ux%u",
+			warning("Egypt: invalid sprite %u offset=0x%08x size=%ux%u",
 			        i, pixelOffset, width, height);
-			_interfaceSprites.clear();
+			out.clear();
 			return false;
 		}
 
@@ -90,9 +95,9 @@ bool Egypt_SpriteLoader::loadInterfaceSprites(const Common::Path &filename) {
 				const uint16 txenWidth  = READ_LE_UINT16(decompressed.data() + pixelOffset + 10);
 				if (txenWidth != width || txenHeight != height ||
 				    pixelOffset + 12 + pixelDataSize > decompressed.size()) {
-					warning("Egypt: invalid TXEN interface sprite %u offset=0x%08x table=%ux%u header=%ux%u",
+					warning("Egypt: invalid TXEN sprite %u offset=0x%08x table=%ux%u header=%ux%u",
 					        i, pixelOffset, width, height, txenWidth, txenHeight);
-					_interfaceSprites.clear();
+					out.clear();
 					return false;
 				}
 				pixelDataOffset += 12;
@@ -100,13 +105,13 @@ bool Egypt_SpriteLoader::loadInterfaceSprites(const Common::Path &filename) {
 		}
 
 		if (pixelDataOffset + pixelDataSize > decompressed.size()) {
-			warning("Egypt: invalid interface sprite %u offset=0x%08x size=%ux%u",
+			warning("Egypt: invalid sprite %u offset=0x%08x size=%ux%u",
 			        i, pixelDataOffset, width, height);
-			_interfaceSprites.clear();
+			out.clear();
 			return false;
 		}
 
-		EgyptInterfaceSprite &sprite = _interfaceSprites[i];
+		EgyptInterfaceSprite &sprite = out[i];
 		sprite.surface.create(width, height, kEgyptSpriteFormat);
 		sprite.hotspotX = width / 2;
 		sprite.hotspotY = height / 2;
