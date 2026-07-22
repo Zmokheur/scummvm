@@ -334,6 +334,8 @@ const Egypt_Script::CommandEntry Egypt_Script::kCommands[] = {
 	{ "animspr",        true,  &Egypt_Script::cmdAnimspr },
 	{ "fonction",       true,  &Egypt_Script::cmdFonction },
 	{ "dialoguer",      true,  &Egypt_Script::cmdDialoguer },
+	{ "stopmusic",      false, &Egypt_Script::cmdStopMusic },
+	{ "music",          true,  &Egypt_Script::cmdMusic },
 };
 
 bool Egypt_Script::executeCommand(const Common::String &rawLine, Context &ctx) {
@@ -360,7 +362,7 @@ bool Egypt_Script::executeCommand(const Common::String &rawLine, Context &ctx) {
 
 	// Commands not implemented yet but known to be safe to skip
 	static const char *const kSafeNoopPrefixes[] = {
-		"music", "stopmusic", "sound", "sounds", "bmouse",
+		"sound", "sounds", "bmouse",
 		"show", "hide", "son_3d", "inventaire", "and"
 	};
 	for (uint i = 0; i < ARRAYSIZE(kSafeNoopPrefixes); ++i) {
@@ -529,6 +531,20 @@ void Egypt_Script::cmdDialoguer(const Common::String &args, Context &ctx) {
 	} else {
 		warning("Egypt: dialoguer %u - zone not found or not DIALOGUER", zoneId);
 	}
+}
+
+// "music <name>" - start (or keep) the named ambient loop (MUSIC/<name>.WAV).
+void Egypt_Script::cmdMusic(const Common::String &args, Context &ctx) {
+	Common::String name = args;
+	name.trim();
+	debugC(kDebugVariable, "Egypt: music %s", name.c_str());
+	_engine->playAmbientMusic(name);
+}
+
+// "stopmusic" - stop the ambient loop.
+void Egypt_Script::cmdStopMusic(const Common::String &args, Context &ctx) {
+	debugC(kDebugVariable, "Egypt: stopmusic");
+	_engine->stopAmbientMusic();
 }
 
 void Egypt_Script::logUnsupportedCommand(const Common::String &line) {

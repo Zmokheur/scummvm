@@ -316,6 +316,14 @@ Common::Path CryOmni3DEngine_Egypt::getFilePath(EgyptFileType type, const Common
 	case kFileTypeVoice:
 		return Common::Path(Common::String::format("sound/FR/%s.apc", name.c_str()));
 
+	case kFileTypeMusic: {
+		// Ambient loops live in MUSIC/ with uppercase names (A1.WAV, S0.WAV,
+		// ...); the script passes them lowercase ("music s0").
+		Common::String upper = name;
+		upper.toUppercase();
+		return Common::Path(Common::String::format("MUSIC/%s.WAV", upper.c_str()));
+	}
+
 	case kFileTypeFont:
 		// EXE builds ".\SPRITE\font0%d.crf" / ".\SPRITE\font%d.crf" (0x80C4B0)
 		return Common::Path(Common::String::format("SPRITE/%s", name.c_str()));

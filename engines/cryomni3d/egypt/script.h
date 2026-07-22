@@ -92,6 +92,8 @@ private:
 	void cmdAnimspr(const Common::String &args, Context &ctx);
 	void cmdFonction(const Common::String &args, Context &ctx);
 	void cmdDialoguer(const Common::String &args, Context &ctx);
+	void cmdMusic(const Common::String &args, Context &ctx);
+	void cmdStopMusic(const Common::String &args, Context &ctx);
 
 	void logUnsupportedCommand(const Common::String &line);
 

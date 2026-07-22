@@ -73,6 +73,7 @@ enum EgyptFileType {
 	kFileTypeDocTree,          // REF/FR/ESPARBO.TXT
 	kFileTypeDocIndex,         // REF/FR/EspIndex.txt (alphabetical index, EXE parser 0x806190)
 	kFileTypeVoice,            // sound/FR/<name>.apc
+	kFileTypeMusic,            // MUSIC/<name>.WAV (ambient loops, played on kMusicSoundType)
 	kFileTypeFont              // SPRITE/<name> (FONT01.CRF..FONT11.CRF, EXE loader 0x80C4B0)
 };
 
@@ -150,6 +151,11 @@ private:
 	bool loadMessageLabels();
 	Common::String resolveMessageLabel(const Common::String &messageId) const;
 	Common::String getHoverTextForZone(const EgyptZone *zone) const;
+
+	// music.cpp - ambient loops (MUSIC/*.WAV, script "music"/"stopmusic")
+	// and one-shot sound effects (MUSIC/*.APC, script "sound"/"sounds").
+	void playAmbientMusic(const Common::String &name);
+	void stopAmbientMusic();
 	Common::Path getFilePath(EgyptFileType type, const Common::String &name = Common::String()) const;
 	void loadScene(const Common::String &sceneName);
 	void parseSceneDefinition(const Common::Path &filename, const Common::String &sceneName);
@@ -259,6 +265,12 @@ private:
 	bool _hasCrossFadeOldScreen = false;
 
 	Common::String _dialogPendingLabel;
+
+	// Ambient music (looping MUSIC/*.WAV) and one-shot SFX (MUSIC/*.APC).
+	// _musicCurrentFile is the loop currently playing so a repeated
+	// "music X" for the same track does not restart it (EXE behavior).
+	Audio::SoundHandle _musicHandle;
+	Common::String _musicCurrentFile;
 };
 
 } // End of namespace Egypt

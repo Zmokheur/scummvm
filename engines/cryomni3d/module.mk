@@ -39,6 +39,7 @@ MODULE_OBJS += \
 	egypt/engine.o \
 	egypt/logic.o \
 	egypt/menu.o \
+	egypt/music.o \
 	egypt/panorama.o \
 	egypt/saveload.o \
 	egypt/scene.o \
