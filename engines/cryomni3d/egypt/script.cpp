@@ -503,6 +503,15 @@ void Egypt_Script::cmdFonction(const Common::String &args, Context &ctx) {
 	// than atoi. Values from EGYPTE.DEF: JEU_SENET = 1, FADE_IN = 6, FADE_OUT = 7.
 	const int funcNum = _engine->resolveScriptValue(args);
 	switch (funcNum) {
+	case 2: // RAZ_INVENTAIRE_ENIGME_A17
+	case 3: // INSERT_OBJET_ENIGME_A17
+	case 4: // RAZ_INVENTAIRE
+		// No-op in the original too: the EXE fonction switch (0x8126c3) only
+		// branches on 1/5/6/7, so these fall straight through to its no-op
+		// exit. The A17 amulet puzzle (LEVEL3/A17GUER.DEF) does all of its
+		// state reset with the surrounding "let FlagEnigme...=0" lines, which
+		// the port already executes - implementing these would diverge.
+		break;
 	case 5: // SABLIER - Level 6 (Karnak) hourglass time-limit
 		// Pure variable update (like "let"); the following script line
 		// "if FlagSablier=3 aller_warp N" produces any state change.
