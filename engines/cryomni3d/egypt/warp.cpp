@@ -27,6 +27,25 @@
 namespace CryOmni3D {
 namespace Egypt {
 
+// --- A/B toggles for the two open orientation questions (roadmap items 9/10) ---
+// Both default to the PORT's current shipped behaviour so nothing changes until
+// flipped. Flip one, rebuild, and compare against the original EXE in-game.
+//
+// Item 9 - arrival beta default. The EXE resets beta to 0.426 rad (24.4 deg) on
+// scene entry (0x807704) and only `centrage =` with an explicit beta overrides
+// it; `+/-` and no-centrage arrivals keep 0.426. The port arrives at beta = 0
+// (horizon). If a no-centrage scene visibly under-pitches vs the original, set
+// this to 0.426 (see reverse_warp_notes.md "Initial alpha/beta base").
+//   false -> beta base 0.0 (current port);  true -> beta base 0.426 (EXE-faithful)
+static const bool kEgyptFaithfulArrivalBeta = false;
+static const double kEgyptArrivalBaseBeta = 0.426; // EXE 0x3eda1cac
+//
+// Item 10 - auto-backlink heuristic. The EXE has NO zone-geometry arrival angle;
+// an unmatched-centrage arrival stays at the scene-entry 1.57 (straight ahead).
+// The port instead rotates to face away from a visible back-link zone. Set this
+// false to drop the heuristic and use the plain straight-ahead default (faithful).
+//   true  -> keep auto-backlink (current port);  false -> EXE-faithful straight-ahead
+static const bool kEgyptUseAutoBacklink = true;
 
 bool isEgyptContextName(const Common::String &name) {
 	return name.hasPrefixIgnoreCase("JOUR") || name.hasPrefixIgnoreCase("NUIT");
@@ -322,10 +341,14 @@ EgyptResolvedCentrage CryOmni3DEngine_Egypt::applyCentrageRaw(const EgyptCentrag
 	// sourceAlpha (the click angle) is intentionally ignored for + and - operations.
 	const double defaultAlpha = M_PI / 2.0;
 
+	// Base beta the arrival keeps unless a `centrage =` supplies an explicit one
+	// (item 9: EXE scene-entry beta = 0.426, port default 0.0 - see the toggle above).
+	const double baseBeta = kEgyptFaithfulArrivalBeta ? kEgyptArrivalBaseBeta : 0.0;
+
 	EgyptResolvedCentrage resolved;
 	resolved.matched = true;
 	resolved.rawFinalAlpha = defaultAlpha;
-	resolved.finalBeta = 0.0;
+	resolved.finalBeta = baseBeta;
 
 	switch (centrage.op) {
 	case '+':
@@ -366,10 +389,11 @@ void CryOmni3DEngine_Egypt::prepareRuntimeArrivalView() {
 	// Default: the EXE always starts each panorama at alpha = pi/2. Centrage rules then either
 	// offset from that default (+/-) or replace it with an absolute value (=).
 	const double defaultAlpha = M_PI / 2.0;
+	const double baseBeta = kEgyptFaithfulArrivalBeta ? kEgyptArrivalBaseBeta : 0.0;
 	_pendingRuntimeResolved.matched = true;
 	_pendingRuntimeResolved.rawFinalAlpha = defaultAlpha;
 	_pendingRuntimeResolved.normalizedFinalAlpha = defaultAlpha;
-	_pendingRuntimeResolved.finalBeta = 0.0;
+	_pendingRuntimeResolved.finalBeta = baseBeta;
 
 	Common::String matchedName;
 	const EgyptCentrage *centrage = findArrivalCentrage(&matchedName);
@@ -378,7 +402,8 @@ void CryOmni3DEngine_Egypt::prepareRuntimeArrivalView() {
 		// Scenes that have explicit back-navigation centrage rules (e.g. centrage M15+3.14)
 		// arrive looking opposite to the back-link zone. Level 1 scenes were authored without
 		// such rules, so replicate the same effect here when a back-link zone exists.
-		if (!_pendingWarp.fromScene.empty()) {
+		// NB the EXE does NOT do this - it stays at the straight-ahead default (item 10).
+		if (kEgyptUseAutoBacklink && !_pendingWarp.fromScene.empty()) {
 			for (const EgyptZone &z : _currentScene.zones) {
 				if (!z.targetWarp.equalsIgnoreCase(_pendingWarp.fromScene))
 					continue;
@@ -394,12 +419,12 @@ void CryOmni3DEngine_Egypt::prepareRuntimeArrivalView() {
 				                                                        _pendingWarp.fromScene.c_str(), centerX);
 				_pendingRuntimeResolved.rawFinalAlpha = backAlpha + M_PI;
 				_pendingRuntimeResolved.normalizedFinalAlpha = arrivalAlpha;
-				setRuntimeViewAngles(arrivalAlpha, 0.0, true);
+				setRuntimeViewAngles(arrivalAlpha, baseBeta, true);
 				return;
 			}
 		}
 		_pendingRuntimeMatchedCentrage = "default_pi_half";
-		setRuntimeViewAngles(defaultAlpha, 0.0, true);
+		setRuntimeViewAngles(defaultAlpha, baseBeta, true);
 		return;
 	}
 
