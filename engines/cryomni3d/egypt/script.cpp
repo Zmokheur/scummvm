@@ -336,6 +336,8 @@ const Egypt_Script::CommandEntry Egypt_Script::kCommands[] = {
 	{ "dialoguer",      true,  &Egypt_Script::cmdDialoguer },
 	{ "stopmusic",      false, &Egypt_Script::cmdStopMusic },
 	{ "music",          true,  &Egypt_Script::cmdMusic },
+	{ "sounds",         true,  &Egypt_Script::cmdSound },
+	{ "sound",          true,  &Egypt_Script::cmdSound },
 };
 
 bool Egypt_Script::executeCommand(const Common::String &rawLine, Context &ctx) {
@@ -362,8 +364,7 @@ bool Egypt_Script::executeCommand(const Common::String &rawLine, Context &ctx) {
 
 	// Commands not implemented yet but known to be safe to skip
 	static const char *const kSafeNoopPrefixes[] = {
-		"sound", "sounds", "bmouse",
-		"show", "hide", "son_3d", "inventaire", "and"
+		"bmouse", "show", "hide", "son_3d", "inventaire", "and"
 	};
 	for (uint i = 0; i < ARRAYSIZE(kSafeNoopPrefixes); ++i) {
 		if (line.hasPrefixIgnoreCase(kSafeNoopPrefixes[i])) {
@@ -545,6 +546,14 @@ void Egypt_Script::cmdMusic(const Common::String &args, Context &ctx) {
 void Egypt_Script::cmdStopMusic(const Common::String &args, Context &ctx) {
 	debugC(kDebugVariable, "Egypt: stopmusic");
 	_engine->stopAmbientMusic();
+}
+
+// "sound <name>" / "sounds <name>" - fire a one-shot APC effect.
+void Egypt_Script::cmdSound(const Common::String &args, Context &ctx) {
+	Common::String name = args;
+	name.trim();
+	debugC(kDebugVariable, "Egypt: sound %s", name.c_str());
+	_engine->playSfx(name);
 }
 
 void Egypt_Script::logUnsupportedCommand(const Common::String &line) {

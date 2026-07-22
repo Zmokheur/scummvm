@@ -324,6 +324,17 @@ Common::Path CryOmni3DEngine_Egypt::getFilePath(EgyptFileType type, const Common
 		return Common::Path(Common::String::format("MUSIC/%s.WAV", upper.c_str()));
 	}
 
+	case kFileTypeSfx: {
+		// One-shot effects are MUSIC/<NAME>.APC; a few localized ones
+		// (e.g. narration MRA9002) live under MUSIC/FR/.
+		Common::String upper = name;
+		upper.toUppercase();
+		Common::Path path(Common::String::format("MUSIC/%s.APC", upper.c_str()));
+		if (Common::File::exists(path))
+			return path;
+		return Common::Path(Common::String::format("MUSIC/FR/%s.APC", upper.c_str()));
+	}
+
 	case kFileTypeFont:
 		// EXE builds ".\SPRITE\font0%d.crf" / ".\SPRITE\font%d.crf" (0x80C4B0)
 		return Common::Path(Common::String::format("SPRITE/%s", name.c_str()));

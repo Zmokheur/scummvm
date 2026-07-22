@@ -74,6 +74,7 @@ enum EgyptFileType {
 	kFileTypeDocIndex,         // REF/FR/EspIndex.txt (alphabetical index, EXE parser 0x806190)
 	kFileTypeVoice,            // sound/FR/<name>.apc
 	kFileTypeMusic,            // MUSIC/<name>.WAV (ambient loops, played on kMusicSoundType)
+	kFileTypeSfx,              // MUSIC/<name>.APC then MUSIC/FR/<name>.APC (one-shot SFX)
 	kFileTypeFont              // SPRITE/<name> (FONT01.CRF..FONT11.CRF, EXE loader 0x80C4B0)
 };
 
@@ -156,6 +157,7 @@ private:
 	// and one-shot sound effects (MUSIC/*.APC, script "sound"/"sounds").
 	void playAmbientMusic(const Common::String &name);
 	void stopAmbientMusic();
+	void playSfx(const Common::String &name);
 	Common::Path getFilePath(EgyptFileType type, const Common::String &name = Common::String()) const;
 	void loadScene(const Common::String &sceneName);
 	void parseSceneDefinition(const Common::Path &filename, const Common::String &sceneName);
@@ -271,6 +273,7 @@ private:
 	// "music X" for the same track does not restart it (EXE behavior).
 	Audio::SoundHandle _musicHandle;
 	Common::String _musicCurrentFile;
+	Audio::SoundHandle _sfxHandle;
 };
 
 } // End of namespace Egypt

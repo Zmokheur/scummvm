@@ -21,9 +21,11 @@
 
 #include "audio/audiostream.h"
 #include "audio/mixer.h"
+#include "audio/decoders/apc.h"
 #include "audio/decoders/wave.h"
 
 #include "common/file.h"
+#include "common/memstream.h"
 
 #include "cryomni3d/egypt/engine.h"
 
@@ -75,6 +77,41 @@ void CryOmni3DEngine_Egypt::stopAmbientMusic() {
 	if (_mixer->isSoundHandleActive(_musicHandle))
 		_mixer->stopHandle(_musicHandle);
 	_musicCurrentFile.clear();
+}
+
+// One-shot sound effects ("sound toctoc", "sounds gouttes"). They are Cryo
+// APC clips stored in MUSIC/ (and MUSIC/FR/ for localized ones). Fire and
+// forget on the SFX channel; a new effect replaces any still playing.
+void CryOmni3DEngine_Egypt::playSfx(const Common::String &name) {
+	Common::String normalized = name;
+	normalized.trim();
+	if (normalized.empty())
+		return;
+
+	if (_mixer->isSoundHandleActive(_sfxHandle))
+		_mixer->stopHandle(_sfxHandle);
+
+	Common::File file;
+	if (!file.open(getFilePath(kFileTypeSfx, normalized))) {
+		warning("Egypt: failed to open sfx %s", normalized.c_str());
+		return;
+	}
+
+	Audio::PacketizedAudioStream *stream = Audio::makeAPCStream(file);
+	if (!stream)
+		return;
+
+	// The APC header is consumed by makeAPCStream; queue the remaining ADPCM
+	// body as a single packet (same pattern as dialogue voice playback).
+	int32 remaining = (int32)(file.size() - file.pos());
+	if (remaining > 0) {
+		byte *buf = new byte[(uint32)remaining];
+		file.read(buf, (uint32)remaining);
+		stream->queuePacket(new Common::MemoryReadStream(buf, (uint32)remaining, DisposeAfterUse::YES));
+	}
+	stream->finish();
+
+	_mixer->playStream(Audio::Mixer::kSFXSoundType, &_sfxHandle, stream);
 }
 
 } // End of namespace Egypt
