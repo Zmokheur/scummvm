@@ -99,7 +99,11 @@ private:
 	// Viewer state shared by draw/handle
 	struct ViewerState {
 		bool standalone = false;
-		Common::Array<int> themeRecords;
+		// Immediate ESPARBO.TXT siblings of the current fiche (its direct
+		// parent's children). prev/next stay inside this list - matches the
+		// EXE getPrev/getNext (0x805760/0x8056f0), which do NOT cross into
+		// the rest of the theme.
+		Common::Array<int> siblingRecords;
 		int currentRecordIndex = 0;
 
 		const EgyptDocumentationRecord *record = nullptr;
@@ -114,6 +118,10 @@ private:
 	const EgyptDocumentationRecord *findRecord(int id) const;
 	void collectLeafRecords(int nodeId, Common::Array<int> &out) const;
 	int findThemeIndexForRecord(int recordId) const;
+	// Fill out with the ESPARBO.TXT children of recordId's parent node and
+	// set index to recordId's position among them (EXE node table 0x46064c,
+	// stride 0x88). Returns false if recordId is not a child of any node.
+	bool buildSiblingRecords(int recordId, Common::Array<int> &out, int &index) const;
 
 	// Fiche page draw (EXE 0x802b80) and event handling
 	void drawRecordPage(ViewerState &state, const Common::Point &mousePos);

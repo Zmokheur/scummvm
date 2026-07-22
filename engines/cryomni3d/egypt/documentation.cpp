@@ -927,7 +927,7 @@ void Egypt_Documentation::drawRecordPage(ViewerState &state, const Common::Point
 	// when bit15 is set) ---
 	if (state.standalone) {
 		const bool canPrev = state.currentRecordIndex > 0;
-		const bool canNext = state.currentRecordIndex + 1 < (int)state.themeRecords.size();
+		const bool canNext = state.currentRecordIndex + 1 < (int)state.siblingRecords.size();
 		if (canPrev) {
 			const uint id = spriteHitRect(_engine->_spriteLoader.interfaceSprite(kSpritePrevNormal),
 			                              kArrowPrevX, kArrowY).contains(mousePos)
@@ -950,21 +950,37 @@ void Egypt_Documentation::drawRecordPage(ViewerState &state, const Common::Point
 	g_system->updateScreen();
 }
 
-bool Egypt_Documentation::openRecordById(ViewerState &state, int recordId) {
-	const int theme = findThemeIndexForRecord(recordId);
-	if (theme >= 0) {
-		Common::Array<int> themeRecords;
-		collectLeafRecords(kEgyptDocumentationThemeIds[theme], themeRecords);
-		const int idx = findDocumentationRecordIndex(themeRecords, recordId);
+bool Egypt_Documentation::buildSiblingRecords(int recordId, Common::Array<int> &out, int &index) const {
+	// Mirrors the EXE node scan (getPrev 0x805760 / getNext 0x8056f0): walk
+	// the ESPARBO.TXT node table looking for the node that lists recordId as
+	// a child, then hand back that node's children in order. Each record has
+	// exactly one parent, so the first match is the only one.
+	for (Common::HashMap<int, Common::Array<int> >::const_iterator it = _tree.begin();
+	     it != _tree.end(); ++it) {
+		const int idx = findDocumentationRecordIndex(it->_value, recordId);
 		if (idx >= 0) {
-			state.themeRecords = themeRecords;
-			state.currentRecordIndex = idx;
+			out = it->_value;
+			index = idx;
 			return true;
 		}
 	}
+	return false;
+}
+
+bool Egypt_Documentation::openRecordById(ViewerState &state, int recordId) {
+	// prev/next browse the record's immediate ESPARBO siblings only - the
+	// EXE never flattens the whole theme subtree (see buildSiblingRecords).
+	Common::Array<int> siblings;
+	int idx = -1;
+	if (buildSiblingRecords(recordId, siblings, idx)) {
+		state.siblingRecords = siblings;
+		state.currentRecordIndex = idx;
+		return true;
+	}
+	// Record not present in the tree: show it alone (no prev/next).
 	if (findRecord(recordId)) {
-		state.themeRecords.clear();
-		state.themeRecords.push_back(recordId);
+		state.siblingRecords.clear();
+		state.siblingRecords.push_back(recordId);
 		state.currentRecordIndex = 0;
 		return true;
 	}
@@ -981,7 +997,7 @@ bool Egypt_Documentation::handleRecordEvents(ViewerState &state, bool &exitViewe
 	}
 
 	const bool canPrev = state.currentRecordIndex > 0;
-	const bool canNext = state.currentRecordIndex + 1 < (int)state.themeRecords.size();
+	const bool canNext = state.currentRecordIndex + 1 < (int)state.siblingRecords.size();
 
 	if (state.standalone) {
 		// EXE keys 0x25/0x27 (VK_LEFT/VK_RIGHT)
@@ -1069,7 +1085,7 @@ void Egypt_Documentation::displayRecord(int docId, bool standalone) {
 	bool exitViewer = false;
 
 	while (!_engine->shouldAbort() && !exitViewer) {
-		state.record = findRecord(state.themeRecords[state.currentRecordIndex]);
+		state.record = findRecord(state.siblingRecords[state.currentRecordIndex]);
 		if (!state.record)
 			break;
 
