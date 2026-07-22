@@ -143,8 +143,25 @@ static bool isRamoseChoiceLabel(const Common::String &label) {
 
 // --- Speaker FLC mapping ---
 
-// EXE 0x413930: dispatch by family (label[0]) then code (label[1..2]).
-// Some codes are ambiguous between families (PT, VI, IN) - the family context is required.
+// EXE 0x413930 (adjusted 0x813930): switch on family (label[0]), then compare
+// the 2-char code label[1..2] against a per-family list, returning the matched
+// speaker's FLC/portrait base name. This is a faithful transcription of that
+// dispatch (jump table 0x414564, per-family handlers, string pool 0x436078..).
+//
+// Key points confirmed from the disassembly:
+//   - Only families A, D, K, M, N, S have a handler; every other first letter
+//     (B, C, E ... R ...) falls through to the default at 0x414557, which
+//     returns no speaker name -> no portrait. In particular the R family (the
+//     level-intro narration labels raa*/rra*) shows NO portrait.
+//   - "RA" -> RAMOSE only exists *inside* the six real families, so it must
+//     NOT be applied globally (an earlier port shortcut wrongly gave rra*
+//     nodes a RAMOSE portrait the EXE never shows).
+//   - The same 2-char code maps to different speakers per family (PT ->
+//     PENTAOUR/PTAHEMEB/PTANEFER; VI -> VIEUX/TOH), so the family gate is
+//     required.
+//   - Family M's IM branch resolves to "NULL" and its CA/CB/CC/CD branches hit
+//     the EXE's "unknown speaker" error path; both mean no portrait, so they
+//     are simply absent here.
 static const char *resolveSpeakerFlc(const Common::String &label) {
 	if (label.size() < 3)
 		return nullptr;
@@ -153,58 +170,49 @@ static const char *resolveSpeakerFlc(const Common::String &label) {
 	const char c1     = (char)toupper((unsigned char)label[1]);
 	const char c2     = (char)toupper((unsigned char)label[2]);
 
-	// RAMOSE is the Ramose speaker in every family (labels *RA*)
-	if (c1 == 'R' && c2 == 'A')
-		return "RAMOSE";
-
 	struct Entry { char family; char c1; char c2; const char *name; };
 	static const Entry kTable[] = {
-		// Family S
-		{ 'S', 'M', 'T', "MONTOUME" },
-		{ 'S', 'I', 'M', "IMENAKHT" },
-		{ 'S', 'I', 'N', "INHERKHA" },
-		// Family D (exclusive)
+		// Family A (0x813dcf)
+		{ 'A', 'E', 'A', "EMBAUMEU" },
+		{ 'A', 'E', 'M', "EMBAUMEU" },
+		{ 'A', 'R', 'A', "RAMOSE"   },
+		// Family D (0x813aeb)
 		{ 'D', 'C', 'A', "CABARETI" },
+		{ 'D', 'I', 'M', "IMENAKHT" },
+		{ 'D', 'M', 'T', "MONTOUME" },
 		{ 'D', 'O', 'U', "OUVRIERE" },
 		{ 'D', 'P', 'E', "PENMENEF" },
 		{ 'D', 'P', 'T', "PENTAOUR" },
 		{ 'D', 'V', 'I', "VIEUX"    },
 		{ 'D', 'E', 'N', "ENFANT"   },
 		{ 'D', 'O', 'C', "COLERE"   },
-		// D + A shared
-		{ 'D', 'E', 'A', "EMBAUMEU" },
-		{ 'D', 'E', 'M', "EMBAUMEU" },
-		{ 'A', 'E', 'A', "EMBAUMEU" },
-		{ 'A', 'E', 'M', "EMBAUMEU" },
-		// D + A + N shared
-		{ 'D', 'D', 'E', "DESSIN"   },
-		{ 'A', 'D', 'E', "DESSIN"   },
-		{ 'N', 'D', 'E', "DESSIN"   },
-		{ 'M', 'D', 'E', "DESSIN"   },
-		{ 'D', 'P', 'L', "PLEUREUS" },
-		{ 'A', 'P', 'L', "PLEUREUS" },
-		{ 'N', 'P', 'L', "PLEUREUS" },
-		// D + A + M shared
-		{ 'D', 'P', 'O', "PORTIER"  },
-		{ 'A', 'P', 'O', "PORTIER"  },
-		{ 'M', 'P', 'O', "PORTIER"  },
-		{ 'D', 'I', 'N', "ESCLAV"   },
-		{ 'A', 'I', 'N', "ESCLAV"   },
-		{ 'M', 'I', 'N', "ESCLAV"   },
-		{ 'D', 'F', 'N', "FEMME"    },
-		{ 'A', 'F', 'N', "FEMME"    },
-		{ 'M', 'F', 'N', "FEMME"    },
-		// Family M (exclusive)
-		{ 'M', 'P', 'T', "PTAHEMEB" },
-		{ 'M', 'N', 'O', "NOBLE"    },
-		{ 'M', 'P', 'A', "PANAHESY" },
-		// Family K
+		{ 'D', 'R', 'A', "RAMOSE"   },
+		// Family K (0x814321)
 		{ 'K', 'C', 'O', "AMEROUTH" },
-		{ 'K', 'P', 'R', "PRETRE"   },
 		{ 'K', 'D', 'O', "DOYEN"    },
 		{ 'K', 'H', 'O', "HOROLOG"  },
-		{ 'K', 'V', 'I', "TOH"      },
+		{ 'K', 'P', 'R', "PRETRE"   },
 		{ 'K', 'P', 'T', "PTANEFER" },
+		{ 'K', 'V', 'I', "TOH"      },
+		{ 'K', 'R', 'A', "RAMOSE"   },
+		// Family M (0x813f53)
+		{ 'M', 'F', 'E', "FEMME"    },
+		{ 'M', 'F', 'N', "FEMME"    },
+		{ 'M', 'I', 'N', "ESCLAV"   },
+		{ 'M', 'N', 'O', "NOBLE"    },
+		{ 'M', 'P', 'A', "PANAHESY" },
+		{ 'M', 'P', 'O', "PORTIER"  },
+		{ 'M', 'P', 'T', "PTAHEMEB" },
+		{ 'M', 'R', 'A', "RAMOSE"   },
+		// Family N (0x813e91)
+		{ 'N', 'D', 'E', "DESSIN"   },
+		{ 'N', 'P', 'L', "PLEUREUS" },
+		{ 'N', 'R', 'A', "RAMOSE"   },
+		// Family S (0x8139db)
+		{ 'S', 'I', 'M', "IMENAKHT" },
+		{ 'S', 'I', 'N', "INHERKHA" },
+		{ 'S', 'M', 'T', "MONTOUME" },
+		{ 'S', 'R', 'A', "RAMOSE"   },
 	};
 
 	for (uint i = 0; i < ARRAYSIZE(kTable); ++i) {
