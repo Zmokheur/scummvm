@@ -294,6 +294,9 @@ bool Egypt_Script::executeBlock(const Common::Array<Common::String> &lines, uint
 				if (label.hasSuffix("!"))
 					label.deleteLastChar();
 
+				// EXE 0x8117cc: reaching a `zoneclic <op> N` comparison activates
+				// zone N unconditionally, before the comparison result is used.
+				_engine->activateZoneclicZonesFromCondition(condition);
 				if (_engine->evaluateScriptCondition(condition) && labels.contains(label))
 					pc = labels[label];
 			} else {
@@ -304,6 +307,7 @@ bool Egypt_Script::executeBlock(const Common::Array<Common::String> &lines, uint
 					condition.trim();
 					command.trim();
 
+					_engine->activateZoneclicZonesFromCondition(condition);
 					if (_engine->evaluateScriptCondition(condition)) {
 						executeCommand(command, ctx);
 						if (!_engine->_pendingWarpTarget.empty())

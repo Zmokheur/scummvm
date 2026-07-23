@@ -212,7 +212,12 @@ private:
 	                                                   const Common::String &toMarker) const;
 	void runWarpInit();
 	void runEndInit(int zoneclic);
-	void autoActivateZoneclicZones();
+	// EXE-faithful zone activation: evaluating a `zoneclic <op> N` comparison in
+	// the endinit script sets zone N active as a side effect (EXE 0x8117cc loop),
+	// unconditionally when the line is reached.  Called by the script interpreter
+	// for every reached `if` condition, so control flow (goto/Level gating) decides
+	// which zones become active - unlike a static full-script scan.
+	void activateZoneclicZonesFromCondition(const Common::String &condition);
 	void runSceneStartup();
 	void performScreenFade(bool toBlack);
 	void performCrossFade(const Graphics::Surface *newScreen);
@@ -248,9 +253,10 @@ private:
 	Egypt_Dialog _dialog;
 	Egypt_Script _script;
 	Egypt_Senet _senet;
-	// Zones always active regardless of script variables (e.g. UTILISER_SUR).
-	// Set once by autoActivateZoneclicZones(); each runEndInit resets activeZones
-	// to this baseline before re-running the script (mirrors EXE per-frame model).
+	// Baseline zones re-applied at the start of every runEndInit before re-running
+	// the endinit script (mirrors the EXE per-frame model).  Currently only the
+	// "no zones activated" fallback (holding-object case) contributes to this set;
+	// zoneclic-comparison activation is re-derived each pass by the script itself.
 	Common::Array<uint> _autoActivationZones;
 	Common::Array<Common::String> _menuLabels;
 	bool _menuLabelsLoaded = false;

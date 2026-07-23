@@ -146,11 +146,11 @@ void CryOmni3DEngine_Egypt::runWarpInit() {
 // endinit phase: run on each player interaction (and once with zoneclic=0 on scene load).
 // Determines active zones and handles navigation.
 void CryOmni3DEngine_Egypt::runEndInit(int zoneclic) {
-	// Reset to the baseline zones that are always active (e.g. UTILISER_SUR zones
-	// added by autoActivateZoneclicZones).  On the first call from runSceneStartup
-	// _autoActivationZones is still empty, so this is a no-op clear - same as
-	// before.  On subsequent calls (timer ticks, dialogue refresh) this mirrors
-	// the EXE's per-frame model: script-managed zones are re-evaluated from scratch.
+	// Reset to the baseline zones (currently only the holding-object fallback set).
+	// On the first call from runSceneStartup _autoActivationZones is empty, so this
+	// clears activeZones; the endinit script below then re-activates its zones from
+	// scratch (zoneactive commands + zoneclic-comparison side effects), mirroring the
+	// EXE's per-frame model where script-managed zones are re-evaluated every pass.
 	_currentScene.activeZones = _autoActivationZones;
 
 	if (!_currentScene.hasEndInit) {
@@ -165,60 +165,65 @@ void CryOmni3DEngine_Egypt::runEndInit(int zoneclic) {
 	_script.executeBlock(block, (uint)zoneclic, alpha, beta);
 }
 
-// --- Zone auto-activation ---
+// --- Zone activation from zoneclic comparisons ---
 
-// Safety-net: activate any zone whose id is directly compared against
-// 'zoneclic' in the script but was not activated by the initial runEndInit(0) pass.
-// We no longer skip zones that also appear in zoneactive/zoneinactive calls:
-// those calls may be in conditional branches that don't execute at startup
-// (e.g. S09 Zone 1 is activated in Suite1 only when FlagPlancheUse!=0, but
-// also referenced by "if zoneclic!=1" in Suite2 for the pit-fall path).
-// The alreadyActive guard is sufficient - if runEndInit(0) already activated
-// the zone, we don't add it again.
-void CryOmni3DEngine_Egypt::autoActivateZoneclicZones() {
+// EXE-faithful: in the script VM, evaluating a `zoneclic <op> N` comparison sets
+// zone N active as an unconditional side effect the moment the comparison line is
+// reached (EXE 0x8117cc: strip the 0x8000 active bit, match the operand id, set it
+// back).  This runs for both `=` and `!=`, regardless of the comparison result.
+//
+// Crucially this is a RUNTIME effect: only comparisons on lines that actually
+// execute activate their zone.  The endinit control flow (e.g. `if Level=1 goto
+// ZoneLevel1` in the NUIT/JOUR necropolis map) therefore gates which level-entry
+// ALLER_WARP zones become clickable - at Level=1 only `if zoneclic!=1` runs, so
+// only zone 1 (the tomb) is active; zones 2-6 stay inactive.  A static full-script
+// scan would wrongly activate every referenced zone and open all levels at once.
+//
+// Called by the script interpreter for each reached `if` condition string.  Scans
+// the condition for `zoneclic <op> N` operands and activates zone N if it exists
+// and has a non-zero rect.  Does not touch _autoActivationZones: the activation is
+// re-derived every runEndInit pass by re-executing the same lines.
+void CryOmni3DEngine_Egypt::activateZoneclicZonesFromCondition(const Common::String &condition) {
 	const char *needle    = "zoneclic";
 	const size_t needleLen = 8;
-	for (uint i = 0; i < _currentScene.scriptLines.size(); ++i) {
-		Common::String lower = _currentScene.scriptLines[i];
-		lower.toLowercase();
-		const char *src = lower.c_str();
+	Common::String lower = condition;
+	lower.toLowercase();
+	const char *src = lower.c_str();
 
-		for (const char *pos = strstr(src, needle); pos != nullptr;
-		     pos = strstr(pos + needleLen, needle)) {
-			const char *cursor = pos + needleLen;
-			if (*cursor == '!' && *(cursor + 1) == '=')
-				cursor += 2;
-			else if (*cursor == '=')
-				cursor += 1;
-			else
-				continue;
+	for (const char *pos = strstr(src, needle); pos != nullptr;
+	     pos = strstr(pos + needleLen, needle)) {
+		const char *cursor = pos + needleLen;
+		if (*cursor == '!' && *(cursor + 1) == '=')
+			cursor += 2;
+		else if (*cursor == '=')
+			cursor += 1;
+		else
+			continue;
 
-			if (!(*cursor >= '0' && *cursor <= '9'))
-				continue;
+		if (!(*cursor >= '0' && *cursor <= '9'))
+			continue;
 
-			char *endPtr = nullptr;
-			const long zoneId = strtol(cursor, &endPtr, 10);
-			if (endPtr == cursor || zoneId <= 0)
-				continue;
+		char *endPtr = nullptr;
+		const long zoneId = strtol(cursor, &endPtr, 10);
+		if (endPtr == cursor || zoneId <= 0)
+			continue;
 
-			const EgyptZone *zone = findZoneById((uint)zoneId);
-			if (!zone || (zone->left == 0 && zone->top == 0 &&
-			              zone->right == 0 && zone->bottom == 0))
-				continue;
+		const EgyptZone *zone = findZoneById((uint)zoneId);
+		if (!zone || (zone->left == 0 && zone->top == 0 &&
+		              zone->right == 0 && zone->bottom == 0))
+			continue;
 
-			bool alreadyActive = false;
-			for (uint ai = 0; ai < _currentScene.activeZones.size(); ++ai) {
-				if (_currentScene.activeZones[ai] == (uint)zoneId) {
-					alreadyActive = true;
-					break;
-				}
+		bool alreadyActive = false;
+		for (uint ai = 0; ai < _currentScene.activeZones.size(); ++ai) {
+			if (_currentScene.activeZones[ai] == (uint)zoneId) {
+				alreadyActive = true;
+				break;
 			}
-			if (!alreadyActive) {
-				_currentScene.activeZones.push_back((uint)zoneId);
-				_autoActivationZones.push_back((uint)zoneId);
-				debugC(kDebugVariable, "Egypt: auto-activating zone %u in %s (referenced by zoneclic comparison)",
-				        (uint)zoneId, _currentScene.name.c_str());
-			}
+		}
+		if (!alreadyActive) {
+			_currentScene.activeZones.push_back((uint)zoneId);
+			debugC(kDebugVariable, "Egypt: zoneclic comparison activated zone %u in %s",
+			        (uint)zoneId, _currentScene.name.c_str());
 		}
 	}
 }
@@ -256,7 +261,10 @@ void CryOmni3DEngine_Egypt::runSceneStartup() {
 		        _currentScene.name.c_str());
 	}
 
-	autoActivateZoneclicZones();
+	// Note: zoneclic-comparison zones are activated at runtime by the endinit script
+	// itself (activateZoneclicZonesFromCondition, invoked per reached `if` line), so
+	// no static full-script scan is needed here - that scan opened every level-entry
+	// zone on the necropolis map at once regardless of the Level gate.
 
 	Common::String activeList;
 	for (uint i = 0; i < _currentScene.activeZones.size(); ++i) {
