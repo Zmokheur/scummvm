@@ -65,7 +65,7 @@ uint CryOmni3DEngine_Egypt::getCursorFrameForZone(const EgyptZone &zone) const {
 	case 3:
 		return kEgyptCursorLook;
 	case 6:
-		return kEgyptCursorVisit;
+		return getVisitZoneCursorFrame(zone);
 	case 7:
 		return kEgyptCursorVisit;
 	case 9:
@@ -75,6 +75,41 @@ uint CryOmni3DEngine_Egypt::getCursorFrameForZone(const EgyptZone &zone) const {
 	default:
 		return kEgyptCursorDefault;
 	}
+}
+
+// EXE fcn.00412ed0 case 6 (actionId==6, the "visit"/info zones): the "?" visit
+// cursor (sprite 12) is NOT shown unconditionally.  The EXE resolves the zone's
+// MSG* message (fcn.00415790 -> the message text, or "Message INCONNU") and scans
+// it for a '/'.  In EGYPTE.DEF a documented message ends with a "//<docId>"
+// suffix, so "contains a '/'" == "this zone has a documentation record".
+//   - no documentation      -> default cursor (13)
+//   - documented, FlagVisite -> visit cursor "?" (12)   [tour mode: consultable]
+//   - documented, no visit, on the JOUR/NUIT necropolis map -> default (13)
+//     (while playing the map is for navigation, not documentation)
+//   - documented, no visit, any other context -> visit cursor "?" (12)
+// This is what drives the night/day-map "?"-vs-arrow difference between the
+// story (FlagVisite==0) and visit (FlagVisite!=0) modes.
+uint CryOmni3DEngine_Egypt::getVisitZoneCursorFrame(const EgyptZone &zone) const {
+	bool hasDocumentation = false;
+	Common::HashMap<Common::String, EgyptMessageEntry, Common::IgnoreCase_Hash,
+	                Common::IgnoreCase_EqualTo>::const_iterator it =
+		_messageLabels.find(zone.label);
+	if (it != _messageLabels.end())
+		hasDocumentation = (it->_value.documentationId >= 0) || it->_value.text.contains('/');
+
+	if (!hasDocumentation)
+		return kEgyptCursorDefault;
+
+	if (getScriptVariableValue("FlagVisite") != 0)
+		return kEgyptCursorVisit;
+
+	const bool onNecropolisMap =
+		_currentScene.contextName.equalsIgnoreCase("JOUR") ||
+		_currentScene.contextName.equalsIgnoreCase("NUIT");
+	if (onNecropolisMap)
+		return kEgyptCursorDefault;
+
+	return kEgyptCursorVisit;
 }
 
 uint CryOmni3DEngine_Egypt::getDefaultCursorFrame() const {

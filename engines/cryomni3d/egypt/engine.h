@@ -174,6 +174,7 @@ private:
 	const EgyptZone *findHoveredActiveZone(const Common::Point &warpPoint) const;
 	const EgyptZone *findInteractiveZone(const Common::Point &warpPoint) const;
 	uint getCursorFrameForZone(const EgyptZone &zone) const;
+	uint getVisitZoneCursorFrame(const EgyptZone &zone) const;
 	uint getDefaultCursorFrame() const;
 	uint getCursorFrameForHeldObject(int heldObjectId, bool variant) const;
 
