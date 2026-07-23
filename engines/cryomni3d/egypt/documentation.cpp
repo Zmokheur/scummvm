@@ -729,43 +729,15 @@ void Egypt_Documentation::displayZone(const EgyptZone &zone) {
 		return;
 	}
 
-	// Fallback: no documentation ID could be resolved; simple text screen
-	// (no EXE equivalent - the original never reaches this state)
-	const Common::String title = _engine->resolveMessageLabel(zone.label);
-	Graphics::ManagedSurface surface(kScreenWidth, kScreenHeight, g_system->getScreenFormat());
-	surface.clear(surface.format.RGBToColor(0, 0, 0));
-
-	Egypt_FontManager &fm = _engine->_fontManager;
-	const uint32 white  = surface.format.RGBToColor(255, 255, 255);
-	const uint32 orange = surface.format.RGBToColor(224, 112, 0);
-
-	fm.setCurrentFont(kSlotThemeLabel);
-	fm.setForeColor(orange);
-	const Common::String header = title.empty() ? "Base documentaire" : title;
-	fm.displayStr(surface, (kScreenWidth - (int)fm.getStrWidth(header)) / 2, 186, header);
-	fm.setCurrentFont(kSlotAlphaIndex);
-	fm.setForeColor(white);
-	const Common::String info = "Aucune fiche resolue pour cette zone";
-	fm.displayStr(surface, (kScreenWidth - (int)fm.getStrWidth(info)) / 2, 244, info);
-
-	g_system->copyRectToScreen(surface.getPixels(), surface.pitch, 0, 0, surface.w, surface.h);
-	g_system->updateScreen();
-
-	_engine->showMouse(true);
-	_engine->setInterfaceCursor(kEgyptCursorDefault);
-	_engine->clearKeys();
-	_engine->waitMouseRelease();
-
-	while (!_engine->shouldAbort()) {
-		_engine->pollEvents();
-		const Common::KeyCode keycode = _engine->getNextKey().keycode;
-		if (_engine->getCurrentMouseButton() == 1 || keycode != Common::KEYCODE_INVALID)
-			break;
-		g_system->delayMillis(10);
-	}
-
-	_engine->clearKeys();
-	_engine->waitMouseRelease();
+	// No documentation record resolves for this zone.  The EXE never opens a
+	// viewer here and never shows an error: a bare info zone (actionId 6 with no
+	// "//<docId>" reference) just keeps its description text visible in the bottom
+	// message band (the warp loop already draws it via drawZoneDescriptionBar).
+	// So do nothing - returning leaves the panorama and its description untouched,
+	// instead of the old "Aucune fiche resolue pour cette zone" screen that had no
+	// EXE equivalent.
+	debugC(kDebugVariable, "EGYPT_BASEDOC: zone %03u (label=%s) has no documentation record; "
+	       "keeping bottom description, no viewer", zone.id, zone.label.c_str());
 }
 
 // Fiche page draw, EXE 0x802b80. Fully redraws the screen and refreshes

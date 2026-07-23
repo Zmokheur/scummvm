@@ -20,7 +20,9 @@
  */
 
 #include "common/debug.h"
+#include "common/endian.h"
 #include "common/file.h"
+#include "common/rect.h"
 #include "common/system.h"
 #include "common/textconsole.h"
 
@@ -49,6 +51,93 @@ private:
 };
 
 } // End of anonymous namespace
+
+// 50/50 average of each pixel with the dark tint {30, 25, 18} - EXE 0x817680
+// (params 0x4352fc/0x435300/0x435304), the same darken the toolbar uses. Mirrors
+// blendDarken() in toolbar.cpp; kept local so the hover-name box matches the EXE
+// box drawn behind the zone name.
+static void blendDarkenRect(Graphics::ManagedSurface &surface, const Common::Rect &rect) {
+	const Graphics::PixelFormat &fmt = surface.format;
+	if (fmt.bytesPerPixel != 4)
+		return;
+	for (int y = rect.top; y < rect.bottom; y++) {
+		if (y < 0 || y >= surface.h)
+			continue;
+		byte *row = (byte *)surface.getBasePtr(0, y);
+		for (int x = rect.left; x < rect.right; x++) {
+			if (x < 0 || x >= surface.w)
+				continue;
+			const uint32 pixel = READ_LE_UINT32(row + x * 4);
+			uint8 r, g, b;
+			fmt.colorToRGB(pixel, r, g, b);
+			r = (uint8)((((r >> 3) + (30 >> 3)) >> 1) << 3);
+			g = (uint8)((((g >> 2) + (25 >> 2)) >> 1) << 2);
+			b = (uint8)((((b >> 3) + (18 >> 3)) >> 1) << 3);
+			WRITE_LE_UINT32(row + x * 4, fmt.RGBToColor(r, g, b));
+		}
+	}
+}
+
+void CryOmni3DEngine_Egypt::drawZoneHoverText(Graphics::ManagedSurface &surface,
+                                              const EgyptZone *zone, uint cursorId,
+                                              const Common::Point &mouse) {
+	if (!zone)
+		return;
+	const Common::String text = getHoverTextForZone(zone);
+	if (text.empty())
+		return;
+
+	if (cursorId == kEgyptCursorWarpLabel) {
+		// EXE cursor renderer (~0x8094xx): with the "finger" warp-label cursor
+		// (edi==0xb, cmp at 0x8095f3) the zone name is drawn ABOVE the cursor - a
+		// darkened box (0x817680) then FONT11 text (font id 0xa) with a black drop
+		// shadow at (x+1,y+1) and white on top, centered on the cursor and 20px
+		// above its top (edi = ebp-0x14).
+		if (cursorId >= _spriteLoader.interfaceSpriteCount())
+			return;
+		const EgyptInterfaceSprite &cursorSpr = _spriteLoader.interfaceSprite(cursorId);
+		const int cursorTop = mouse.y - cursorSpr.hotspotY;
+
+		_fontManager.setCurrentFont(Egypt_FontManager::kSlotToolbar); // FONT11 = EXE font 0xa
+		const int textW = (int)_fontManager.getStrWidth(text);
+
+		int x = mouse.x - textW / 2;  // centered on the cursor (EXE esi - width/2)
+		int y = cursorTop - 20;       // EXE ebp - 0x14
+		if (x < 1)
+			x = 1;
+		if (x + textW > kScreenWidth - 1)
+			x = kScreenWidth - 1 - textW;
+		if (y < 1)
+			y = 1;
+
+		// EXE 0x80972c box: top-left (X-1, Y-1), width textW+2, height 0xf (15).
+		blendDarkenRect(surface, Common::Rect(x - 1, y - 1, x + textW + 1, y - 1 + 15));
+		_fontManager.setForeColor(surface.format.RGBToColor(0, 0, 0));
+		_fontManager.displayStr(surface, x + 1, y + 1, text);
+		_fontManager.setForeColor(surface.format.RGBToColor(255, 255, 255));
+		_fontManager.displayStr(surface, x, y, text);
+		return;
+	}
+
+	// Info zones (actionId 6): the description is shown bottom-left over a darkened
+	// strip, not at the cursor.  EXE 0x808480: the text is drawn (0x81a510) at
+	// y = 0x1d2 (466), x = 0x2 in story mode or 0x16 (22) in visit mode, with FONT11
+	// (font id 0xa) and no shadow.  Behind it the EXE darkens a bottom strip
+	// (0x817680, tint {30,25,18}) starting at buffer offset 0x91000 == row 464,
+	// height 0x10 (16px, 464..480), width = text width + 0x4 (story) / +0x18 (visit).
+	if (zone->actionId != 6)
+		return;
+
+	const bool visitMode = getScriptVariableValue("FlagVisite") != 0;
+	_fontManager.setCurrentFont(Egypt_FontManager::kSlotToolbar); // FONT11 = EXE font 0xa
+	const int textW = (int)_fontManager.getStrWidth(text);
+	const int textX = visitMode ? 22 : 2;                 // EXE 0x16 / 0x2
+	const int boxW  = textW + (visitMode ? 24 : 4);       // EXE esi + 0x18 / +0x4
+
+	blendDarkenRect(surface, Common::Rect(0, 464, boxW, 480));
+	_fontManager.setForeColor(surface.format.RGBToColor(255, 255, 255));
+	_fontManager.displayStr(surface, textX, 466, text);
+}
 
 
 bool CryOmni3DEngine_Egypt::displayCurrentWarpFixed(const Graphics::Surface *frame) {
@@ -93,9 +182,9 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpFixed(const Graphics::Surface *fra
 		const Common::Point mouse = getMousePos();
 		// Zone coords for TGA scenes are in screen space - use mouse directly as warp point.
 		const EgyptZone *hoveredZone = findHoveredActiveZone(mouse);
+		uint cursorId = getDefaultCursorFrame();
 		{
 			const int held = getScriptVariableValue("main");
-			uint cursorId;
 			if (held == 0) {
 				cursorId = hoveredZone ? getCursorFrameForZone(*hoveredZone) : getDefaultCursorFrame();
 			} else if (hoveredZone && hoveredZone->commandName.equalsIgnoreCase("UTILISER_SUR")) {
@@ -137,17 +226,9 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpFixed(const Graphics::Surface *fra
 		if (_spriteLoader.isSceneSprDirty())
 			_spriteLoader.setSceneSprDirty(false);
 
-		const Common::String hoverText = getHoverTextForZone(hoveredZone);
-		if (!hoverText.empty()) {
-			// EXE 0x815e50: hover label with font slot 9 (FONT10.CRF),
-			// orange shadow at (mouseX+12, mouseY+1) then white text at
-			// (mouseX+11, mouseY); no bubble, glyph-level clipping only.
-			_fontManager.setCurrentFont(Egypt_FontManager::kSlotHoverLabel);
-			_fontManager.setForeColor(compositedFrame.format.RGBToColor(224, 112, 0));
-			_fontManager.displayStr(compositedFrame, mouse.x + 12, mouse.y + 1, hoverText);
-			_fontManager.setForeColor(compositedFrame.format.RGBToColor(255, 255, 255));
-			_fontManager.displayStr(compositedFrame, mouse.x + 11, mouse.y, hoverText);
-		}
+		// Finger cursor -> zone name above cursor; info zones -> description
+		// bottom-left (EXE ~0x8094xx).
+		drawZoneHoverText(compositedFrame, hoveredZone, cursorId, mouse);
 
 		g_system->copyRectToScreen(compositedFrame.getPixels(), compositedFrame.pitch,
 		                           0, 0, compositedFrame.w, compositedFrame.h);
@@ -363,7 +444,6 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpRotation(const Graphics::Surface *
 
 		Common::Point warpPoint = renderer.mapMouseCoords(mouse);
 		const EgyptZone *hoveredZone = findHoveredActiveZone(warpPoint);
-		const Common::String hoverText = getHoverTextForZone(hoveredZone);
 		{
 			const int held = getScriptVariableValue("main");
 			if (hoveredZone) {
@@ -431,15 +511,9 @@ bool CryOmni3DEngine_Egypt::displayCurrentWarpRotation(const Graphics::Surface *
 			compositedFrame.blitFrom(*result);
 			if (_spriteLoader.hasPendingOverlay())
 				_spriteLoader.applyOverlayToSurface(*compositedFrame.surfacePtr());
-			if (!hoverText.empty()) {
-				// EXE 0x815e50: font slot 9, orange shadow then white text
-				// at mouse position (see the fixed-view variant above)
-				_fontManager.setCurrentFont(Egypt_FontManager::kSlotHoverLabel);
-				_fontManager.setForeColor(compositedFrame.format.RGBToColor(224, 112, 0));
-				_fontManager.displayStr(compositedFrame, mouse.x + 12, mouse.y + 1, hoverText);
-				_fontManager.setForeColor(compositedFrame.format.RGBToColor(255, 255, 255));
-				_fontManager.displayStr(compositedFrame, mouse.x + 11, mouse.y, hoverText);
-			}
+			// Finger cursor -> name above cursor; info zones -> description
+			// bottom-left (see fixed-view variant).
+			drawZoneHoverText(compositedFrame, hoveredZone, movingCursor, mouse);
 
 			g_system->copyRectToScreen(compositedFrame.getPixels(), compositedFrame.pitch, 0, 0,
 			                           compositedFrame.w, compositedFrame.h);

@@ -154,6 +154,13 @@ private:
 	bool loadMessageLabels();
 	Common::String resolveMessageLabel(const Common::String &messageId) const;
 	Common::String getHoverTextForZone(const EgyptZone *zone) const;
+	// Draw the hovered zone's text (EXE cursor renderer ~0x8094xx):
+	//  - warp-label "finger" cursor (kEgyptCursorWarpLabel): the zone name in a
+	//    darkened box above the cursor (centered, 20px up);
+	//  - info zones (actionId 6, any other cursor): the description bottom-left.
+	// Everything else draws nothing.
+	void drawZoneHoverText(Graphics::ManagedSurface &surface, const EgyptZone *zone,
+	                       uint cursorId, const Common::Point &mouse);
 
 	// music.cpp - ambient loops (MUSIC/*.WAV, script "music"/"stopmusic")
 	// and one-shot sound effects (MUSIC/*.APC, script "sound"/"sounds").
